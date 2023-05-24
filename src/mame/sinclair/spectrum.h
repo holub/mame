@@ -54,6 +54,7 @@ public:
 		m_video_ram(*this, "video_ram"),
 		m_maincpu(*this, "maincpu"),
 		m_screen(*this, "screen"),
+		m_snapshot(*this, "snapshot"),
 		m_cassette(*this, "cassette"),
 		m_ram(*this, RAM_TAG),
 		m_specmem(*this, "specmem"),
@@ -90,6 +91,7 @@ protected:
 	virtual void video_start() override;
 
 	// until machine/spec_snqk.cpp gets somehow disentangled
+	virtual void bank3_set_page(u8 page) { }
 	virtual void plus3_update_memory() { }
 	virtual void spectrum_128_update_memory() { }
 	virtual void ts2068_update_memory() { }
@@ -154,6 +156,7 @@ protected:
 	void spectrum_map(address_map &map);
 	void spectrum_data(address_map &map);
 
+	required_device<snapshot_image_device> m_snapshot;
 	required_device<cassette_image_device> m_cassette;
 	required_device<ram_device> m_ram;
 	optional_device<address_map_bank_device> m_specmem;
@@ -207,6 +210,9 @@ protected:
 	void setup_frz(uint8_t *snapdata, uint32_t snapsize);
 	void z80_decompress_block(address_space &space, uint8_t *source, uint16_t dest, uint16_t size);
 	void setup_z80(uint8_t *snapdata, uint32_t snapsize);
+	void setup_spg(u8 *snapdata, u32 snapsize);
+	void mlz_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size);
+	u16 hrust_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size);
 
 	// quickload helpers
 	void log_quickload(const char *type, uint32_t start, uint32_t length, uint32_t exec, const char *exec_format);
