@@ -1775,7 +1775,7 @@ void spectrum_state::snx_decompress_block(address_space &space, uint8_t *source,
 	}
 }
 
-u16 spectrum_state::hrust_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size)
+static u16 hrust_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size)
 {
 	class bb_stream
 	{
@@ -1977,7 +1977,7 @@ u16 spectrum_state::hrust_decompress_block(uint8_t *dest, uint8_t *source, uint1
 	return to - dest;
 }
 
-void spectrum_state::mlz_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size)
+static void mlz_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size)
 {
 	class de_mlz
 	{
