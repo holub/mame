@@ -202,17 +202,17 @@ license:CC0-1.0
 		<info name="developer" value="Mister Robin"/>
 		<info name="developer" value="Fatalsnipe"/>
 		<info name="developer" value="Alex Mart"/>
-		<part name="v1_6_NeoGS" interface="spectrum_snapshot">
+		<part name="v1_6_neogs" interface="spectrum_snapshot">
 			<dataarea name="dump" size="1703424">
 				<rom name="Otter&amp;Smocker v1.6 (NEOGS).spg" size="1703424" crc="b069bff4" sha1="b28ac7a9afcb11d7cbfc6392df601e3b6473d9b1" />
 			</dataarea>
 		</part>
-		<part name="v1_6_Turbosound" interface="spectrum_snapshot">
+		<part name="v1_6_turbosound" interface="spectrum_snapshot">
 			<dataarea name="dump" size="1703424">
 				<rom name="Otter&amp;Smocker v1.6 (TAY).spg" size="1703424" crc="7539f2ca" sha1="e7c85f002e31b0ef4fe02c6565e8552ef528778b" />
 			</dataarea>
 		</part>
-		<part name="v1_6_NoFX" interface="spectrum_snapshot">
+		<part name="v1_6_nofx" interface="spectrum_snapshot">
 			<dataarea name="dump" size="1703424">
 				<rom name="Otter&amp;Smocker v1.6 (NoFX).spg" size="1703424" crc="a76b1815" sha1="063d1d0922bc1c70f0832c3ba17d35f413bb10b2" />
 			</dataarea>
@@ -360,7 +360,7 @@ license:CC0-1.0
 		<info name="developer" value="n1k-o"/>
 		<info name="developer" value="Black Cat"/>
 		<info name="developer" value="Inside"/>
-		<part name="v2_0_Turbosound" interface="floppy_5_25">
+		<part name="v2_0_turbosound" interface="floppy_5_25">
 			<dataarea name="flop1" size="655360">
 				<rom name="TS v2.0(TFM)_edited.trd" size="655360" crc="05cf31ef" sha1="6a25e71b805c21410607f8c62a62198333ced2fd" />
 			</dataarea>
@@ -379,7 +379,7 @@ license:CC0-1.0
 
 	<software name="uwol">
 		<description>Uwol - Quest for Money</description>
-		<year>2006-2012</year>
+		<year>2012</year>
 		<publisher>&lt;homebrew&gt;</publisher>
 		<info name="developer" value="Blade"/>
 		<info name="developer" value="Shiru"/>
