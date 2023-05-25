@@ -1862,7 +1862,7 @@ static u16 hrust_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size)
 		{
 			offset = 0xfff8 + s.get_bits(3);
 			*to = to[offset];
-			*to++;
+			to++;
 			continue;
 		}
 
@@ -1887,10 +1887,10 @@ static u16 hrust_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size)
 
 					offset = 0xff00 + b - 0x0f;
 					*to = to[offset];
-					*to++;
+					to++;
 					*to++ = s.get_byte();
 					*to = to[offset];
-					*to++;
+					to++;
 					continue;
 				}
 				offset = 0xff00 + b;
@@ -1907,7 +1907,7 @@ static u16 hrust_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size)
 			for (u8 i = 0; i < 2; ++i)
 			{
 				*to = to[offset];
-				*to++;
+				to++;
 			}
 			continue;
 		}
@@ -1918,10 +1918,10 @@ static u16 hrust_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size)
 			{
 				offset = 0xfff0 + s.get_bits(4);
 				*to = to[offset];
-				*to++;
+				to++;
 				*to++ = s.get_byte();
 				*to = to[offset];
-				*to++;
+				to++;
 				continue;
 			}
 
@@ -1961,10 +1961,10 @@ static u16 hrust_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size)
 				offset = 0xff00 + b - 0x0f;
 
 				*to = to[offset];
-				*to++;
+				to++;
 				*to++ = s.get_byte();
 				*to = to[offset];
-				*to++;
+				to++;
 				continue;
 			}
 			offset = 0xff00 + b;
@@ -1983,7 +1983,7 @@ static u16 hrust_decompress_block(uint8_t *dest, uint8_t *source, uint16_t size)
 		for (u16 i = 0; i < len; ++i)
 		{
 			*to = to[offset];
-			*to++;
+			to++;
 		}
 	}
 
