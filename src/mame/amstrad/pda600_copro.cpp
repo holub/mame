@@ -226,14 +226,6 @@ ioport_constructor pda600_copro_device::device_input_ports() const
 }
 
 
-void pda600_copro_device::device_resolve_objects()
-{
-	// resolve callbacks
-	m_tx_cb.resolve_safe();
-	m_tone_cb.resolve_safe();
-}
-
-
 void pda600_copro_device::device_start()
 {
 	// parameters used by the MAINCPU to configure the Z180 ASCI1
@@ -285,7 +277,7 @@ TIMER_CALLBACK_MEMBER(pda600_copro_device::update_timer)
 }
 
 
-WRITE_LINE_MEMBER( pda600_copro_device::wakeup_w )
+void pda600_copro_device::wakeup_w(int state)
 {
 	if (m_state != STATE_SLEEP && m_state != STATE_READY)
 		logerror("PDA600: wakeup_w in %d state\n", m_state);
