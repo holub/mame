@@ -1659,6 +1659,10 @@ INPUT_PORTS_START( sprinter )
 	PORT_BIT(0xfe, IP_ACTIVE_HIGH, IPT_UNUSED)
 INPUT_PORTS_END
 
+static void no_devices(device_slot_interface &device)
+{
+}
+
 void sprinter_state::sprinter(machine_config &config)
 {
 	spectrum_128(config);
@@ -1682,7 +1686,7 @@ void sprinter_state::sprinter(machine_config &config)
 
 	ISA8(config, m_isa[1], 0);
 	m_isa[1]->set_custom_spaces();
-	ISA8_SLOT(config, "isa8", 0, m_isa[1], pc_isa8_cards, nullptr, false);
+	ISA8_SLOT(config, "isa8", 0, m_isa[1], no_devices, nullptr, false);
 
 	m_screen->set_raw(X_SP / 3, SPRINT_WIDTH, SPRINT_HEIGHT, { 0, SPRINT_XVIS - 1, 0, SPRINT_YVIS - 1 });
 	m_screen->set_screen_update(FUNC(sprinter_state::screen_update));
@@ -1699,10 +1703,8 @@ void sprinter_state::sprinter(machine_config &config)
 	m_maincpu->set_clk_trg<1>(X_SP / 48);
 	m_maincpu->set_clk_trg<2>(X_SP / 48);
 
-	rs232_port_device &m_rs232(RS232_PORT(config, "rs232", default_rs232_devices, "microsoft_mouse"));
+	rs232_port_device &m_rs232(RS232_PORT(config, "rs232", no_devices, "microsoft_mouse"));
 	m_rs232.option_add("microsoft_mouse", MSFT_HLE_SERIAL_MOUSE);
-	m_rs232.option_add("logitech_mouse", LOGITECH_HLE_SERIAL_MOUSE);
-	m_rs232.option_add("wheel_mouse", WHEEL_HLE_SERIAL_MOUSE);
 	m_rs232.rxd_handler().set(m_maincpu, FUNC(z84c015_device::rxb_w)); // MOUSE_D
 	m_maincpu->out_txdb_callback().set("rs232", FUNC(rs232_port_device::write_txd)); // TXDB
 	m_maincpu->zc_callback<0>().set(m_maincpu, FUNC(z84c015_device::rxcb_w)); // CLK_COM1
@@ -1749,6 +1751,9 @@ ROM_START( sprinter )
 
 	ROM_SYSTEM_BIOS(4, "v3.04.253", "BIOS v3.04, SETUP v253") // 06.16.2003
 	ROMX_LOAD( "sp2k-3.04.253.rom", 0x000000, 0x40000, CRC(1729cb5c) SHA1(fb4c9f80651aa87526f141839fb4d6cb86b654c7), ROM_BIOS(4))
+
+	ROM_SYSTEM_BIOS(5, "dev",       "BIOS in development") // 01.01.2022
+	ROMX_LOAD( "_sprin.bin",        0x000000, 0x40000, CRC(fe1c2685) SHA1(10e4e29bdc058cd4380837fb8831ce4f5977f6b8), ROM_BIOS(5))
 ROM_END
 
 } // Anonymous namespace
