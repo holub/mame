@@ -29,6 +29,7 @@ public:
 	scorpion_state(const machine_config &mconfig, device_type type, const char *tag)
 		: spectrum_128_state(mconfig, type, tag)
 		, m_beta(*this, BETA_DISK_TAG)
+		, m_io_view(*this, "io_view")
 		, m_bank0_rom(*this, "bank0_rom")
 		, m_io_mouse(*this, "mouse_input%u", 1U)
 		, m_ay(*this, "ay%u", 0U)
@@ -61,6 +62,7 @@ protected:
 	u8 m_is_m1_even;
 
 private:
+	memory_view m_io_view;
 	memory_view m_bank0_rom;
 	address_space *m_program;
 
@@ -149,7 +151,7 @@ void scorpion_state::scorpion_update_memory()
 		m_bank0_rom.select(0);
 		LOGMEM("mem: 0=ROM(%x),", m_bank_rom[0]->entry());
 	}
-	m_bank_ram[3]->set_entry(((m_port_7ffd_data & 0x07) | ((m_port_1ffd_data & 0x10) >> 1) | ((m_port_1ffd_data & 0x80) >> 3) | ((m_port_1ffd_data & 0x40) >> 1)) % m_ram_banks);
+	m_bank_ram[3]->set_entry(((m_port_7ffd_data & 0x07) | ((m_port_1ffd_data & 0x10) >> 1) | ((m_port_1ffd_data & 0xc0) >> 2)) % m_ram_banks);
 	LOGMEM("3=RAM(%x)\n", m_bank_ram[3]->entry());
 }
 
@@ -210,6 +212,7 @@ u8 scorpion_state::beta_enable_r(offs_t offset)
 		if (m_beta->started() && !m_beta->is_active())
 		{
 			m_beta->enable();
+			m_io_view.select(0);
 			scorpion_update_memory();
 		}
 	}
@@ -224,6 +227,7 @@ u8 scorpion_state::beta_disable_r(offs_t offset)
 		if (m_beta->started() && m_beta->is_active())
 		{
 			m_beta->disable();
+			m_io_view.disable();
 			scorpion_update_memory();
 		}
 	}
@@ -245,25 +249,29 @@ void scorpion_state::scorpion_io(address_map &map)
 {
 	map.unmap_value_high();
 	map(0x0022, 0x0022).select(0xffdc).rw(FUNC(scorpion_state::spectrum_ula_r), FUNC(scorpion_state::spectrum_ula_w));
-	map(0x0003, 0x0003).mirror(0xff1c).rw(m_beta, FUNC(beta_disk_device::status_r), FUNC(beta_disk_device::command_w));
-	map(0x0023, 0x0023).mirror(0xff1c).rw(m_beta, FUNC(beta_disk_device::track_r), FUNC(beta_disk_device::track_w));
-	map(0x0043, 0x0043).mirror(0xff1c).rw(m_beta, FUNC(beta_disk_device::sector_r), FUNC(beta_disk_device::sector_w));
-	map(0x0063, 0x0063).mirror(0xff1c).rw(m_beta, FUNC(beta_disk_device::data_r), FUNC(beta_disk_device::data_w));
-	map(0x00e3, 0x00e3).mirror(0xff1c).rw(m_beta, FUNC(beta_disk_device::state_r), FUNC(beta_disk_device::param_w));
+	map(0x0023, 0x0023).select(0xffdc).r(FUNC(scorpion_state::floating_bus_r));
 	map(0x0021, 0x0021).select(0x3fdc).lr8(NAME([this](offs_t offset) { return m_port_1ffd_data; }))
 		.w(FUNC(scorpion_state::port_1ffd_w));
 	map(0x4021, 0x4021).select(0x3fdc).lr8(NAME([this](offs_t offset) { return m_port_7ffd_data; }))
 		.w(FUNC(scorpion_state::port_7ffd_w));
 
 	map(0xa021, 0xa021).mirror(0x1fdc).lw8(NAME([this](u8 data) { m_ay[m_ay_selected]->data_w(data); }));
-	map(0xe021, 0xe021).mirror(0x1fdc).lr8(NAME([this]() { return m_ay[m_ay_selected]->data_r(); }))
-		.w(FUNC(scorpion_state::ay_address_w));
+	map(0xe021, 0xe021).mirror(0x1fdc).lr8(NAME([this]() { return m_ay[m_ay_selected]->data_r(); })).w(FUNC(scorpion_state::ay_address_w));
 
 	// Mouse
 	map(0xfadf, 0xfadf).lr8(NAME([this]() { return 0x80 | (m_io_mouse[2]->read() & 0x07); }));
 	map(0xfbdf, 0xfbdf).lr8(NAME([this]() { return m_io_mouse[0]->read(); }));
 	map(0xffdf, 0xffdf).lr8(NAME([this]() { return ~m_io_mouse[1]->read(); }));
-	map(0x0003, 0x0003).mirror(0xff5c).lr8(NAME([]() { return 0x00; })); // TODO Kepmston Joystick
+	map(0x0003, 0x0003).select(0xff5c).lr8(NAME([]() { return 0xc0; })); // TODO Kepmston Joystick
+
+	// Shadow
+	map(0x0000, 0xffff).view(m_io_view);
+	m_io_view[0](0x0003, 0x0003).mirror(0xff1c).rw(m_beta, FUNC(beta_disk_device::status_r), FUNC(beta_disk_device::command_w));
+	m_io_view[0](0x0023, 0x0023).mirror(0xff1c).rw(m_beta, FUNC(beta_disk_device::track_r), FUNC(beta_disk_device::track_w));
+	m_io_view[0](0x0043, 0x0043).mirror(0xff1c).rw(m_beta, FUNC(beta_disk_device::sector_r), FUNC(beta_disk_device::sector_w));
+	m_io_view[0](0x0063, 0x0063).mirror(0xff1c).rw(m_beta, FUNC(beta_disk_device::data_r), FUNC(beta_disk_device::data_w));
+	m_io_view[0](0x00e3, 0x00e3).mirror(0xff1c).rw(m_beta, FUNC(beta_disk_device::state_r), FUNC(beta_disk_device::param_w));
+
 }
 
 void scorpion_state::scorpion_switch(address_map &map)
@@ -374,8 +382,8 @@ INPUT_PORTS_START( scorpion )
 	PORT_BIT(0xff, 0, IPT_MOUSE_Y) PORT_SENSITIVITY(30)
 
 	PORT_START("mouse_input3")
-	PORT_BIT(0x01, IP_ACTIVE_LOW, IPT_BUTTON4) PORT_NAME("Left mouse button") PORT_CODE(MOUSECODE_BUTTON1)
-	PORT_BIT(0x02, IP_ACTIVE_LOW, IPT_BUTTON5) PORT_NAME("Right mouse button") PORT_CODE(MOUSECODE_BUTTON2)
+	PORT_BIT(0x01, IP_ACTIVE_LOW, IPT_BUTTON4) PORT_NAME("Left mouse button") PORT_CODE(MOUSECODE_BUTTON2)
+	PORT_BIT(0x02, IP_ACTIVE_LOW, IPT_BUTTON5) PORT_NAME("Right mouse button") PORT_CODE(MOUSECODE_BUTTON1)
 	PORT_BIT(0x04, IP_ACTIVE_LOW, IPT_BUTTON6) PORT_NAME("Middle mouse button") PORT_CODE(MOUSECODE_BUTTON3)
 
 
@@ -421,6 +429,7 @@ void scorpion_state::scorpion(machine_config &config)
 	zxbus_device &zxbus(ZXBUS(config, "zxbus", 0));
 	zxbus.set_iospace("maincpu", AS_IO);
 	ZXBUS_SLOT(config, "zxbus1", 0, "zxbus", zxbus_cards, nullptr);
+	ZXBUS_SLOT(config, "zxbus2", 0, "zxbus", zxbus_cards, nullptr);
 }
 
 void scorpion_state::profi(machine_config &config)
@@ -447,7 +456,8 @@ void scorpiontb_state::scorpiontb(machine_config &config)
 		get_screen_area().top() - SPEC_TOP_BORDER, get_screen_area().bottom() + SPEC_BOTTOM_BORDER };
 	m_screen->set_raw(X1 / 2, SPEC_CYCLES_PER_LINE * 2, SPEC_UNSEEN_LINES + SPEC_SCREEN_HEIGHT + 4, visarea);
 
-	m_ram->set_default_size("256K").set_extra_options("512K,1M");
+	//m_ram->set_default_size("256K").set_extra_options("512K,1M");
+	m_ram->set_default_size("1M");
 }
 
 void scorpiontb_state::scorpion_update_memory()
@@ -513,10 +523,6 @@ void scorpiontb_state::scorpion_io(address_map &map)
 
 	// Centronics
 	map(0x0001, 0x0001).mirror(0xffdc).nopw();
-
-	// SMUC
-	map(0x00ba, 0x00ba).mirror(0xff00).noprw();
-	map(0x00be, 0x00be).mirror(0xff00).noprw();
 }
 
 
