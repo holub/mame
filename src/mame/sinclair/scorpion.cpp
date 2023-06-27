@@ -28,6 +28,7 @@ class scorpion_state : public spectrum_128_state
 public:
 	scorpion_state(const machine_config &mconfig, device_type type, const char *tag)
 		: spectrum_128_state(mconfig, type, tag)
+		, m_zxbus(*this, "zxbus")
 		, m_beta(*this, BETA_DISK_TAG)
 		, m_io_view(*this, "io_view")
 		, m_bank0_rom(*this, "bank0_rom")
@@ -57,6 +58,7 @@ protected:
 	rectangle get_screen_area() override;
 	virtual void scorpion_update_memory();
 
+	required_device<zxbus_device> m_zxbus;
 	required_device<beta_disk_device> m_beta;
 
 	u8 m_is_m1_even;
@@ -214,6 +216,7 @@ u8 scorpion_state::beta_enable_r(offs_t offset)
 			m_beta->enable();
 			m_io_view.select(0);
 			scorpion_update_memory();
+			m_zxbus->dos_w(0);
 		}
 	}
 	return m_program->read_byte(offset + 0x3d00);
@@ -229,6 +232,7 @@ u8 scorpion_state::beta_disable_r(offs_t offset)
 			m_beta->disable();
 			m_io_view.disable();
 			scorpion_update_memory();
+			m_zxbus->dos_w(1);
 		}
 	}
 	return m_program->read_byte(offset + 0x4000);
@@ -304,6 +308,7 @@ void scorpion_state::machine_reset()
 	m_ay_selected = 0;
 	m_bank0_rom.select(0);
 	m_beta->disable();
+	m_zxbus->dos_w(1);
 
 	m_port_fe_data = -1;
 	m_port_7ffd_data = 0;
@@ -426,10 +431,9 @@ void scorpion_state::scorpion(machine_config &config)
 
 	config.device_remove("exp");
 
-	zxbus_device &zxbus(ZXBUS(config, "zxbus", 0));
-	zxbus.set_iospace("maincpu", AS_IO);
-	ZXBUS_SLOT(config, "zxbus1", 0, "zxbus", zxbus_cards, nullptr);
-	ZXBUS_SLOT(config, "zxbus2", 0, "zxbus", zxbus_cards, nullptr);
+	ZXBUS(config, m_zxbus, 0).set_iospace("maincpu", AS_IO);
+	ZXBUS_SLOT(config, "zxbus1", 0, m_zxbus, zxbus_cards, nullptr);
+	ZXBUS_SLOT(config, "zxbus2", 0, m_zxbus, zxbus_cards, nullptr);
 }
 
 void scorpion_state::profi(machine_config &config)

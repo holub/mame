@@ -86,19 +86,25 @@ public:
 	zxbus_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
 
 	template <typename T> void set_iospace(T &&tag, int spacenum) { m_iospace.set_tag(std::forward<T>(tag), spacenum); }
+	auto dos_cb() { return m_dos_cb.bind(); }
+
 	template<typename T> void install_device(offs_t addrstart, offs_t addrend, T &device, void (T::*map)(class address_map &map), uint64_t unitmask = ~u64(0))
 	{
 		m_iospace->install_device(addrstart, addrend, device, map, unitmask);
 	}
 
+	void dos_w(int state) { m_dos_cb(state); }
+
 	void add_slot(zxbus_slot_device &slot);
 
 protected:
 	zxbus_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock);
-
 	virtual void device_start() override;
 
 	required_address_space m_iospace;
+
+	devcb_write_line m_dos_cb;
+
 	std::forward_list<zxbus_slot_device *> m_slot_list;
 };
 
