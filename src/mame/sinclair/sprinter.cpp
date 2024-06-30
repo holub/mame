@@ -686,6 +686,8 @@ void sprinter_state::dcp_w(offs_t offset, u8 data)
 		m_beta->param_w(data);
 		break;
 	case 0x16:
+	case 0x17:
+		m_beta->turbo_w(dcpp & 1);
 		if (data & 2)
 			m_beta->disable();
 		else
@@ -1368,6 +1370,23 @@ void sprinter_state::machine_start()
 	m_hold     = {0, 0}; // cb
 	m_conf_loading = 1;
 	m_conf = 0;
+
+	int idx = Z84_MCR + 1;
+	m_maincpu->state_add_divider(-1);
+	m_maincpu->state_add(idx++, "PG0",          m_pages[0]);
+	m_maincpu->state_add(idx++, "PG1",          m_pages[1]);
+	m_maincpu->state_add(idx++, "PG2",          m_pages[2]);
+	m_maincpu->state_add(idx++, "PG3",          m_pages[3]);
+
+	m_maincpu->state_add(idx++, "CNF",          m_cnf);
+	m_maincpu->state_add(idx++, "ALL_MODE",     m_all_mode);
+	m_maincpu->state_add(idx++, "PN",           m_pn);
+	m_maincpu->state_add(idx++, "SC",           m_sc);
+
+	m_maincpu->state_add(idx++, "RGMOD",        m_rgmod);
+	m_maincpu->state_add(idx++, "PORT_Y",       m_port_y);
+
+	m_maincpu->state_add(idx++, "ISA_ADDR_EXT", m_isa_addr_ext);
 }
 
 void sprinter_state::machine_reset()
@@ -1731,13 +1750,13 @@ void sprinter_state::sprinter(machine_config &config)
 	m_maincpu->set_irq_acknowledge_callback(NAME([](device_t &, int){ return 0xff; }));
 	m_maincpu->irqack_cb().set(FUNC(sprinter_state::irq_off));
 
-	ISA8(config, m_isa[0], 0);
+	ISA8(config, m_isa[0], X_SP / 5);
 	m_isa[0]->set_custom_spaces();
 	zxbus_device &zxbus(ZXBUS(config, "zxbus", 0));
 	zxbus.set_iospace(m_isa[0], isa8_device::AS_ISA_IO);
 	ZXBUS_SLOT(config, "zxbus2isa", 0, "zxbus", zxbus_cards, nullptr);
 
-	ISA8(config, m_isa[1], 0);
+	ISA8(config, m_isa[1], X_SP / 5);
 	m_isa[1]->set_custom_spaces();
 	ISA8_SLOT(config, "isa8", 0, m_isa[1], pc_isa8_cards, nullptr, false);
 
@@ -1806,6 +1825,12 @@ ROM_START( sprinter )
 
 	ROM_SYSTEM_BIOS(4, "v3.04.253", "BIOS v3.04, SETUP v253") // 06.16.2003
 	ROMX_LOAD( "sp2k-3.04.253.rom", 0x000000, 0x40000, CRC(1729cb5c) SHA1(fb4c9f80651aa87526f141839fb4d6cb86b654c7), ROM_BIOS(4))
+
+	ROM_SYSTEM_BIOS(5, "v3.05.254", "BIOS v3.05, SETUP v254") // 01.01.2022
+	ROMX_LOAD( "sp2k-3.05.254.rom", 0x000000, 0x40000, CRC(fe1c2685) SHA1(10e4e29bdc058cd4380837fb8831ce4f5977f6b8), ROM_BIOS(5))
+
+	ROM_SYSTEM_BIOS(6, "dev",      "BIOS v3.06 beta2") // 06.25.2024
+	ROMX_LOAD( "_sprin.bin",   0x000000, 0x40000, CRC(fc6763a1) SHA1(223bd695d69d1d278204143c97cec79c78eed9d5), ROM_BIOS(6))
 ROM_END
 
 } // Anonymous namespace
