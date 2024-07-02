@@ -355,7 +355,7 @@ void spectrum_state::spectrum_ula_w(offs_t offset, uint8_t data)
 	if (changed & 0x18)
 	{
 		/* D3: write cassette data */
-		if (BIT(changed, 3)) m_cassette->output(BIT(data, 3) ? -1.0 : +1.0);
+		if (BIT(changed, 3)) m_cassette->output(BIT(data, 3) ? +1.0 : -1.0);
 
 		m_speaker->level_w(BIT(data, 3, 2));
 	}
