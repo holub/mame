@@ -29,11 +29,6 @@ enum v_mode : u8
 	VM_TXT
 };
 
-static constexpr u32 tmp_tile_oversized_to_code(u16 code)
-{
-	return code / 64 * 64 * 8 + (code % 64);
-}
-
 // https://github.com/tslabs/zx-evo/blob/master/pentevo/vdac/vdac1/cpld/top.v
 static constexpr u8 pwm_to_rgb[32] = {
 	0, 10, 21, 31, 42, 53, 63, 74,
@@ -346,7 +341,7 @@ void tsconf_state::draw_sprites(screen_device &screen_d, bitmap_rgb32 &bitmap, c
 					{
 						m_gfxdecode->gfx(TM_SPRITES)->transpen(
 								bitmap, cliprect,
-								tmp_tile_oversized_to_code((tile_row % 64) * 64 + (tile_col % 64)),
+								(tile_row % 64) * 64 + (tile_col % 64),
 								pal, flipx, flipy, ix, iy,
 								0);
 					}
@@ -354,7 +349,7 @@ void tsconf_state::draw_sprites(screen_device &screen_d, bitmap_rgb32 &bitmap, c
 					{
 						m_gfxdecode->gfx(TM_SPRITES)->prio_transpen(
 								bitmap, cliprect,
-								tmp_tile_oversized_to_code((tile_row % 64) * 64 + (tile_col % 64)),
+								(tile_row % 64) * 64 + (tile_col % 64),
 								pal, flipx, flipy, ix, iy,
 								screen_d.priority(), GFX_PMASK_2 | (layer ? GFX_PMASK_1 : 0), 0);
 					}
@@ -460,6 +455,11 @@ u8 tsconf_state::tsconf_port_xx1f_r(offs_t offset) {
 	return m_beta->started() && m_beta->is_active()
 			? m_beta->status_r()
 			: 0x00; // TODO kempston read
+}
+
+void tsconf_state::bank3_set_page(u8 page)
+{
+	tsconf_port_xxaf_w(PAGE3 << 8, page);
 }
 
 void tsconf_state::tsconf_port_7ffd_w(u8 data)
