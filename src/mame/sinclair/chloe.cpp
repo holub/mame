@@ -590,7 +590,13 @@ void chloe_state::map_regs(address_map &map)
 	}));
 	map(0x04, 0x04).lr8(NAME([this]() // SCANCODE
 	{
-		return m_kbdc->data_r(0);
+		u8 dat = m_kbdc->data_r(0);
+		if (dat == 0xf0)
+		{
+			dat = 0;
+			m_kbdc->data_r(0);
+		}
+		return dat;
 	}));
 	map(0x05, 0x05).lr8(NAME([this]() // KBSTATUS
 	{
