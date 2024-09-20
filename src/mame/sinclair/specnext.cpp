@@ -3434,7 +3434,7 @@ void specnext_state::video_start()
 void specnext_state::tbblue(machine_config &config)
 {
 	spectrum_128(config);
-	config.device_remove("exp");
+	//config.device_remove("exp");
 	// m_ram->set_default_size("1M").set_extra_options("2M");
 	m_ram->set_default_size("2M").set_default_value(0);
 

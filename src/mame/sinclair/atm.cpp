@@ -517,7 +517,7 @@ void atm_state::atm(machine_config &config)
 	output_latch_device &cent_data_out(OUTPUT_LATCH(config, "cent_data_out"));
 	m_centronics->set_output_latch(cent_data_out);
 
-	config.device_remove("exp");
+	//config.device_remove("exp");
 }
 
 

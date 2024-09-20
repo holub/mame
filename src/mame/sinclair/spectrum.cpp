@@ -293,46 +293,28 @@ SamRam
 
 uint8_t spectrum_state::pre_opcode_fetch_r(offs_t offset)
 {
-	if (is_contended(offset)) content_early();
-
-	/* this allows expansion devices to act upon opcode fetches from MEM addresses
-	   for example, interface1 detection fetches requires fetches at 0008 / 0708 to
-	   enable paged ROM and then fetches at 0700 to disable it
-	*/
-	m_exp->pre_opcode_fetch(offset);
 	uint8_t retval = m_specmem->space(AS_PROGRAM).read_byte(offset);
-	m_exp->post_opcode_fetch(offset);
 	return retval;
 }
 
 uint8_t spectrum_state::spectrum_data_r(offs_t offset)
 {
-	if (is_contended(offset)) content_early();
-
-	m_exp->pre_data_fetch(offset);
 	uint8_t retval = m_specmem->space(AS_PROGRAM).read_byte(offset);
-	m_exp->post_data_fetch(offset);
 	return retval;
 }
 
 void spectrum_state::spectrum_data_w(offs_t offset, uint8_t data)
 {
-	if (is_contended(offset)) content_early();
-	if (is_vram_write(offset)) m_screen->update_now();
-
 	m_specmem->space(AS_PROGRAM).write_byte(offset,data);
 }
 
 void spectrum_state::spectrum_rom_w(offs_t offset, uint8_t data)
 {
-	m_exp->mreq_w(offset, data);
 }
 
 uint8_t spectrum_state::spectrum_rom_r(offs_t offset)
 {
-	return m_exp->romcs()
-		? m_exp->mreq_r(offset)
-		: memregion("maincpu")->base()[offset];
+	return memregion("maincpu")->base()[offset];
 }
 
 /*
@@ -343,9 +325,6 @@ uint8_t spectrum_state::spectrum_rom_r(offs_t offset)
 */
 void spectrum_state::spectrum_ula_w(offs_t offset, uint8_t data)
 {
-	if (is_contended(offset)) content_early();
-	content_early(1);
-
 	u8 changed = m_port_fe_data ^ data;
 
 	/* D0-D2: border colour changed? */
@@ -360,10 +339,6 @@ void spectrum_state::spectrum_ula_w(offs_t offset, uint8_t data)
 		m_speaker->level_w(BIT(data, 3, 2));
 	}
 
-	// Some exp devices use ula port unused bits 5-7:
-	// Beta v2/3/plus use bit 7, Beta clones use bits 6 and 7
-	if (m_exp) m_exp->iorq_w(offset, data);
-
 	m_port_fe_data = data;
 }
 
@@ -371,9 +346,6 @@ void spectrum_state::spectrum_ula_w(offs_t offset, uint8_t data)
 /* DJR: Spectrum+ keys added */
 uint8_t spectrum_state::spectrum_ula_r(offs_t offset)
 {
-	if (is_contended(offset)) content_early();
-	content_early(1);
-
 	int lines = offset >> 8;
 	int data = 0xff;
 
@@ -384,9 +356,6 @@ uint8_t spectrum_state::spectrum_ula_r(offs_t offset)
 	int ss_extra2 = m_io_plus4.read_safe(0x1f) & 0x1f;
 	int joy1 = m_io_joy1.read_safe(0x1f) & 0x1f;
 	int joy2 = m_io_joy2.read_safe(0x1f) & 0x1f;
-
-	/* expansion port */
-	if (m_exp) data = m_exp->iorq_r(offset);
 
 	/* Caps - V */
 	if ((lines & 1) == 0)
@@ -448,38 +417,15 @@ uint8_t spectrum_state::spectrum_ula_r(offs_t offset)
 
 void spectrum_state::spectrum_port_w(offs_t offset, uint8_t data)
 {
-	if (is_contended(offset))
-	{
-		content_early();
-		content_late();
-	}
-
-	// Pass through to expansion device if present
-	if (m_exp->get_card_device())
-		m_exp->iorq_w(offset | 1, data);
 }
 
 uint8_t spectrum_state::spectrum_port_r(offs_t offset)
 {
-	if (is_contended(offset))
-	{
-		content_early();
-		content_late();
-	}
-
-	// Pass through to expansion device if present
-	if (m_exp->get_card_device())
-		return m_exp->iorq_r(offset | 1);
-
 	return floating_bus_r();
 }
 
 uint8_t spectrum_state::spectrum_clone_port_r(offs_t offset)
 {
-	// Pass through to expansion device if present
-	if (m_exp->get_card_device())
-		return m_exp->iorq_r(offset | 1);
-
 	// no floating bus for clones
 	return 0xff;
 }
@@ -828,12 +774,6 @@ void spectrum_state::spectrum_common(machine_config &config)
 	static const double speaker_levels[4] = { 0.0, 0.33, 0.66, 1.0 };
 	m_speaker->set_levels(4, speaker_levels);
 
-	/* expansion port */
-	SPECTRUM_EXPANSION_SLOT(config, m_exp, spectrum_expansion_devices, "kempjoy");
-	m_exp->irq_handler().set_inputline(m_maincpu, INPUT_LINE_IRQ0);
-	m_exp->nmi_handler().set_inputline(m_maincpu, INPUT_LINE_NMI);
-	m_exp->fb_r_handler().set(FUNC(spectrum_state::floating_bus_r));
-
 	/* devices */
 	SNAPSHOT(config, "snapshot", "ach,frz,plusd,prg,sem,sit,sna,snp,snx,sp,z80,zx").set_load_callback(FUNC(spectrum_state::snapshot_cb));
 	QUICKLOAD(config, "quickload", "raw,scr", attotime::from_seconds(2)).set_load_callback(FUNC(spectrum_state::quickload_cb)); // The delay prevents the screen from being cleared by the RAM test at boot
@@ -865,7 +805,6 @@ void spectrum_state::spectrum_clone(machine_config &config)
 
 	// no floating bus
 	m_maincpu->set_addrmap(AS_IO, &spectrum_state::spectrum_clone_io);
-	m_exp->fb_r_handler().set([]() { return 0xff; });
 }
 
 /***************************************************************************

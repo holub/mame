@@ -179,7 +179,7 @@ void specpls3_state::port_3ffd_w(offs_t offset, uint8_t data)
 	if (m_upd765.found()) m_upd765->fifo_w(data);
 
 	/* mface3 needs to see this port */
-	if (m_exp) m_exp->iorq_w(offset | 0x3000, data);
+	//if (m_exp) m_exp->iorq_w(offset | 0x3000, data);
 }
 
 uint8_t specpls3_state::port_3ffd_r()
@@ -238,17 +238,13 @@ void specpls3_state::plus3_update_memory()
 
 void specpls3_state::rom_w(offs_t offset, uint8_t data)
 {
-	if (m_exp->romcs())
-		m_exp->mreq_w(offset, data);
-	else if (m_port_1ffd_data & 0x01)
+if (m_port_1ffd_data & 0x01)
 		((u8*)m_bank_ram[0]->base())[offset] = data;
 }
 
 uint8_t specpls3_state::rom_r(offs_t offset)
 {
-	return m_exp->romcs()
-		? m_exp->mreq_r(offset)
-		: (m_port_1ffd_data & 0x01)
+	return (m_port_1ffd_data & 0x01)
 		  ? ((u8*)m_bank_ram[0]->base())[offset]
 		  : ((u8*)m_bank_rom[0]->base())[offset];
 }
@@ -259,9 +255,6 @@ void specpls3_state::port_7ffd_w(offs_t offset, uint8_t data)
 	/* D3    - Screen select (screen 0 in ram page 5, screen 1 in ram page 7 */
 	/* D4    - ROM select low bit - which rom paged into 0x0000-0x03fff */
 	/* D5    - Disable paging (permanent until reset) */
-
-	/* mface3 needs to see this port */
-	if (m_exp) m_exp->iorq_w(offset | 0x4000, data);
 
 	/* paging disabled? */
 	if (m_port_7ffd_data & 0x20) return;
@@ -288,9 +281,6 @@ void specpls3_state::port_1ffd_w(offs_t offset, uint8_t data)
 		for (auto &flop : m_flop)
 			if (flop->get_device()) flop->get_device()->mon_w(!BIT(data, 3));
 	}
-
-	/* mface3 needs to see this port */
-	if (m_exp) m_exp->iorq_w(offset | 0x1000, data);
 
 	/* paging disabled? */
 	if ((m_port_7ffd_data & 0x20)==0)
@@ -319,7 +309,7 @@ void specpls3_state::video_start()
 The function decodes the ports appropriately */
 void specpls3_state::plus3_io(address_map &map)
 {
-	map(0x0000, 0xffff).rw(m_exp, FUNC(spectrum_expansion_slot_device::iorq_r), FUNC(spectrum_expansion_slot_device::iorq_w));
+	//map(0x0000, 0xffff).rw(m_exp, FUNC(spectrum_expansion_slot_device::iorq_r), FUNC(spectrum_expansion_slot_device::iorq_w));
 	map(0x0000, 0x0000).rw(FUNC(specpls3_state::spectrum_ula_r), FUNC(specpls3_state::spectrum_ula_w)).select(0xfffe);
 	map(0x4000, 0x4000).w(FUNC(specpls3_state::port_7ffd_w)).select(0x3ffd);
 	map(0x8000, 0x8000).w("ay8912", FUNC(ay8910_device::data_w)).mirror(0x3ffd);
@@ -412,12 +402,6 @@ void specpls3_state::spectrum_plus2(machine_config &config)
 	m_maincpu->nomreq_cb().set_nop();
 
 	subdevice<gfxdecode_device>("gfxdecode")->set_info(specpls3);
-
-	SPECTRUM_EXPANSION_SLOT(config.replace(), m_exp, specpls3_expansion_devices, nullptr);
-	m_exp->irq_handler().set_inputline(m_maincpu, INPUT_LINE_IRQ0);
-	m_exp->nmi_handler().set_inputline(m_maincpu, INPUT_LINE_NMI);
-	// these models don't have floating bus
-	m_exp->fb_r_handler().set([]() { return 0xff; });
 }
 
 void specpls3_state::spectrum_plus3(machine_config &config)

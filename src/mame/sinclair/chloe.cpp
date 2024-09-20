@@ -898,7 +898,7 @@ void chloe_state::video_start()
 void chloe_state::chloe(machine_config &config)
 {
 	spectrum_128(config);
-	config.device_remove("exp");
+	//config.device_remove("exp");
 	config.device_remove("palette");
 	m_ram->set_default_size("512K").set_default_value(0xff);
 

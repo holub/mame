@@ -264,7 +264,7 @@ void tsconf_state::tsconf(machine_config &config)
 {
 	spectrum_128(config);
 
-	config.device_remove("exp");
+	//config.device_remove("exp");
 	config.device_remove("palette");
 
 	Z80(config.replace(), m_maincpu, 14_MHz_XTAL / 4);

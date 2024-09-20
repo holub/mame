@@ -215,7 +215,7 @@ void pentagon_state::pentagon(machine_config &config)
 	ay8912.add_route(1, "rspeaker", 0.25);
 	ay8912.add_route(2, "rspeaker", 0.50);
 
-	config.device_remove("exp");
+	//config.device_remove("exp");
 
 	SOFTWARE_LIST(config, "cass_list_pen").set_original("pentagon_cass");
 	SOFTWARE_LIST(config, "betadisc_list").set_original("spectrum_betadisc_flop");

@@ -13,7 +13,7 @@
 
 #include "spec_snqk.h"
 #include "machine/bankdev.h"
-#include "bus/spectrum/exp.h"
+//#include "bus/spectrum/exp.h"
 #include "imagedev/cassette.h"
 #include "imagedev/snapquik.h"
 #include "machine/ram.h"
@@ -58,7 +58,7 @@ public:
 		m_ram(*this, RAM_TAG),
 		m_specmem(*this, "specmem"),
 		m_speaker(*this, "speaker"),
-		m_exp(*this, "exp"),
+		//m_exp(*this, "exp"),
 		m_io_line0(*this, "LINE0"),
 		m_io_line1(*this, "LINE1"),
 		m_io_line2(*this, "LINE2"),
@@ -158,7 +158,7 @@ protected:
 	required_device<ram_device> m_ram;
 	optional_device<address_map_bank_device> m_specmem;
 	required_device<speaker_sound_device> m_speaker;
-	optional_device<spectrum_expansion_slot_device> m_exp;
+	//optional_device<spectrum_expansion_slot_device> m_exp;
 
 	// Regular spectrum ports; marked as optional because of other subclasses
 	optional_ioport m_io_line0;

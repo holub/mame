@@ -523,7 +523,7 @@ void scorpion_state::scorpion(machine_config &config)
 
 	BETA_DISK(config, m_beta, 0);
 
-	config.device_remove("exp");
+	//config.device_remove("exp");
 
 	ADDRESS_MAP_BANK(config, m_bankio).set_map(&scorpion_state::scorpion_ioext).set_options(ENDIANNESS_LITTLE, 8, 17, 0);
 

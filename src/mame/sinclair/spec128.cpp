@@ -173,34 +173,22 @@ void spectrum_128_state::video_start()
 
 uint8_t spectrum_128_state::spectrum_128_pre_opcode_fetch_r(offs_t offset)
 {
-	if (is_contended(offset)) content_early();
-
-	/* this allows expansion devices to act upon opcode fetches from MEM addresses
-	   for example, interface1 detection fetches requires fetches at 0008 / 0708 to
-	   enable paged ROM and then fetches at 0700 to disable it
-	*/
-	m_exp->pre_opcode_fetch(offset);
 	uint8_t retval = m_maincpu->space(AS_PROGRAM).read_byte(offset);
-	m_exp->post_opcode_fetch(offset);
 	return retval;
 }
 
 void spectrum_128_state::spectrum_128_rom_w(offs_t offset, uint8_t data)
 {
-	m_exp->mreq_w(offset, data);
 }
 
 u8 spectrum_128_state::spectrum_128_rom_r(offs_t offset)
 {
-	return m_exp->romcs()
-		? m_exp->mreq_r(offset)
-		: ((u8*)m_bank_rom[0]->base())[offset];
+	return ((u8*)m_bank_rom[0]->base())[offset];
 }
 
 template <u8 Bank> void spectrum_128_state::spectrum_128_ram_w(offs_t offset, u8 data)
 {
 	u16 addr = 0x4000 * Bank + offset;
-	if (is_contended(addr)) content_early();
 	if (is_vram_write(addr)) m_screen->update_now();
 
 	((u8*)m_bank_ram[Bank]->base())[offset] = data;
@@ -210,17 +198,11 @@ template void spectrum_128_state::spectrum_128_ram_w<0>(offs_t offset, u8 data);
 
 template <u8 Bank> u8 spectrum_128_state::spectrum_128_ram_r(offs_t offset)
 {
-	u16 addr = 0x4000 * Bank + offset;
-	if (is_contended(addr)) content_early();
-
 	return ((u8*)m_bank_ram[Bank]->base())[offset];
 }
 
 void spectrum_128_state::spectrum_128_port_7ffd_w(offs_t offset, uint8_t data)
 {
-	if (is_contended(offset)) content_early();
-	content_early(1);
-
 	/* D0-D2: RAM page located at 0x0c000-0x0ffff */
 	/* D3 - Screen select (screen 0 in ram page 5, screen 1 in ram page 7 */
 	/* D4 - ROM select - which rom paged into 0x0000-0x03fff */
@@ -234,8 +216,6 @@ void spectrum_128_state::spectrum_128_port_7ffd_w(offs_t offset, uint8_t data)
 
 	/* update memory */
 	spectrum_128_update_memory();
-
-	m_exp->iorq_w(offset | 1, data);
 }
 
 void spectrum_128_state::spectrum_128_update_memory()
@@ -253,16 +233,6 @@ void spectrum_128_state::spectrum_128_update_memory()
 
 uint8_t spectrum_128_state::spectrum_port_r(offs_t offset)
 {
-	if (is_contended(offset))
-	{
-		content_early();
-		content_late();
-	}
-
-	// Pass through to expansion device if present
-	if (m_exp->get_card_device())
-		return m_exp->iorq_r(offset | 1);
-
 	return floating_bus_r();
 }
 
@@ -370,12 +340,6 @@ void spectrum_128_state::spectrum_128(machine_config &config)
 
 	/* sound hardware */
 	AY8912(config, "ay8912", X1_128_SINCLAIR / 20).add_route(ALL_OUTPUTS, "mono", 0.25);
-
-	/* expansion port */
-	SPECTRUM_EXPANSION_SLOT(config.replace(), m_exp, spec128_expansion_devices, nullptr);
-	m_exp->irq_handler().set_inputline(m_maincpu, INPUT_LINE_IRQ0);
-	m_exp->nmi_handler().set_inputline(m_maincpu, INPUT_LINE_NMI);
-	m_exp->fb_r_handler().set(FUNC(spectrum_128_state::floating_bus_r));
 
 	/* internal ram */
 	m_ram->set_default_size("128K");
