@@ -9,6 +9,7 @@
 #include "emu.h"
 #include "isa_cards.h"
 
+/*
 // video
 #include "mda.h"
 #include "cga.h"
@@ -89,10 +90,11 @@
 #include "finalchs.h"
 #include "bblue2.h"
 #include "opus100pm.h"
-
+*/
 
 void pc_isa8_cards(device_slot_interface &device)
 {
+/*
 	device.option_add("mda", ISA8_MDA);
 	device.option_add("cga", ISA8_CGA);
 	device.option_add("cga_ec1841", ISA8_EC1841_0002);
@@ -148,10 +150,12 @@ void pc_isa8_cards(device_slot_interface &device)
 	device.option_add("acb2072", ACB2072);
 	device.option_add("3xtwin", ISA8_3XTWIN);
 	device.option_add("opus108pm", ISA8_OPUS108PM);
+*/
 }
 
 void pc_isa16_cards(device_slot_interface &device)
 {
+/*
 	// 8-bit
 	device.option_add("mda", ISA8_MDA);
 	device.option_add("cga", ISA8_CGA);
@@ -251,4 +255,5 @@ void pc_isa16_cards(device_slot_interface &device)
 	device.option_add("omti8621", ISA16_OMTI8621);
 	device.option_add("lrk331", LRK331);
 	device.option_add("hpblp", HPBLP);
+*/
 }

@@ -1450,6 +1450,13 @@ void sprinter_state::machine_start()
 	m_dcp_location = m_ram->pointer() + (0x40 << 14);
 	m_maincpu->space(AS_PROGRAM).specific(m_program);
 
+	for (int addr = 0; addr < m_fastram.bytes(); ++addr)
+		m_fastram.target()[addr] = machine().rand();
+	for (int addr = 0; addr < m_vram.bytes(); ++addr)
+		m_vram.target()[addr] = machine().rand();
+	for (int addr = 0; addr < m_ram->size(); ++addr)
+		m_ram->pointer()[addr] = machine().rand();
+
 	const u8 port_default[0x40] = {
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Cx - SYS PORTS COPIES
 		0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, // Dx - RAM PAGES
@@ -1464,6 +1471,23 @@ void sprinter_state::machine_start()
 	m_hold     = {0, 0}; // cb
 	m_conf_loading = 1;
 	m_conf = 0;
+
+	int idx = Z84_MCR + 1;
+	m_maincpu->state_add_divider(-1);
+	m_maincpu->state_add(idx++, "PG0",          m_pages[0]);
+	m_maincpu->state_add(idx++, "PG1",          m_pages[1]);
+	m_maincpu->state_add(idx++, "PG2",          m_pages[2]);
+	m_maincpu->state_add(idx++, "PG3",          m_pages[3]);
+
+	m_maincpu->state_add(idx++, "CNF",          m_cnf);
+	m_maincpu->state_add(idx++, "ALL_MODE",     m_all_mode);
+	m_maincpu->state_add(idx++, "PN",           m_pn);
+	m_maincpu->state_add(idx++, "SC",           m_sc);
+
+	m_maincpu->state_add(idx++, "RGMOD",        m_rgmod);
+	m_maincpu->state_add(idx++, "PORT_Y",       m_port_y);
+
+	m_maincpu->state_add(idx++, "ISA_ADDR_EXT", m_isa_addr_ext);
 }
 
 void sprinter_state::machine_reset()
@@ -1848,6 +1872,7 @@ INPUT_PORTS_START( sprinter )
 	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_BUTTON6)        PORT_PLAYER(2) PORT_CODE(JOYCODE_BUTTON6) PORT_NAME("%p Z")
 
 
+
 	PORT_START("TURBO")
 	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("TURBO") PORT_CODE(KEYCODE_F12) PORT_TOGGLE PORT_CHANGED_MEMBER(DEVICE_SELF, sprinter_state, turbo_changed, 0)
 INPUT_PORTS_END
@@ -1946,6 +1971,12 @@ ROM_START( sprinter )
 
 	ROM_SYSTEM_BIOS(4, "v3.04.253", "BIOS v3.04, SETUP v253") // 06.16.2003
 	ROMX_LOAD( "sp2k-3.04.253.rom", 0x000000, 0x40000, CRC(1729cb5c) SHA1(fb4c9f80651aa87526f141839fb4d6cb86b654c7), ROM_BIOS(4))
+
+	ROM_SYSTEM_BIOS(5, "v3.05.254", "BIOS v3.05, SETUP v254") // 01.01.2022
+	ROMX_LOAD( "sp2k-3.05.254.rom", 0x000000, 0x40000, CRC(fe1c2685) SHA1(10e4e29bdc058cd4380837fb8831ce4f5977f6b8), ROM_BIOS(5))
+
+	ROM_SYSTEM_BIOS(6, "dev",       "BIOS v3.06 beta4") // 07.08.2024
+	ROMX_LOAD( "_sprin.bin",        0x000000, 0x40000, CRC(a8216aa6) SHA1(80df40f7e3d298f318c0a46f82a3705661261a94), ROM_BIOS(6))
 ROM_END
 
 } // Anonymous namespace
