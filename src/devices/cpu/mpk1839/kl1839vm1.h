@@ -10,7 +10,7 @@
 
 enum
 {
-	KL1839_PCM = STATE_GENPC, KL1839_IF, KL1839_RSP, KL1839_RC, KL1839_RV, KL1839_SCH,
+	KL1839_AMC = STATE_GENPC, KL1839_IF, KL1839_RSP, KL1839_RC, KL1839_RV, KL1839_SCH,
 	VAX_R0, VAX_R1, VAX_R2, VAX_R3, VAX_R4, VAX_R5, VAX_R6, VAX_R7, VAX_R8, VAX_R9, VAX_R10, VAX_R11,
 	VAX_AP, VAX_FP, VAX_SP, VAX_PC,
 	VAX_AK0, VAX_AK1, VAX_AK2, VAX_AK3, VAX_AK4, VAX_AK5, VAX_AK6, VAX_AK7, VAX_AK8,
@@ -98,15 +98,17 @@ private:
 
 	std::unique_ptr<util::disasm_interface> m_vax_dasm;
 
-	PAIR				m_vma_tmp; // does we have int reg for this?
-	PAIR				m_rv;
-	PAIR				m_sch;
+	PAIR                m_vma_tmp; // does we have int reg for this?
+	PAIR                m_rv;
+	PAIR                m_sch;
 	PAIR                m_rsp;
+	PAIR                m_amc;    // Microdode PC
 	PAIR                m_ppc;    // previous program counter
 	bool                m_fp;
 	u32                 m_consts[0x10] = { 0x4, 0x2, 0x8, 0x1, 0x0, 0, 0, 0x66, 0, 0xc00000, 0xffffffff, 0x1f0000, 0x4000000, 0, 0, 0 };
 	PAIR                m_reg[0x20];
 	int                 m_icount;
+	bool                m_s_state;
 
 	std::deque<u32> m_ppp;
 };

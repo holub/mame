@@ -17,12 +17,13 @@
 #define UNIMPLEMENTED(msg) LOG("Unimplemented: %s\n", msg)
 #define LOGVAX(...)        LOGMASKED(LOG_VAX, __VA_ARGS__)
 
+#define AMC    m_amc.d   // Microcode PC
 #define RV     m_rv.d    // Return Address
 #define SCH    m_sch.b.l // Counter
 #define RSP    m_rsp.b.l // Flags
 
 #define K(x)   m_consts[x & 0x0f]
-#define PCM    K(5)      // Microcode PC
+#define PCM    K(5)
 #define RC     K(6)      // Constant
 
 /* registers of various sizes */
@@ -324,7 +325,7 @@ void kl1839vm1_device::mk(u32 op)
 	const bool ret = BIT(op, 17);
 	if (!ret)
 	{
-		RV = PCM;
+		RV = AMC;
 	}
 
 	if ((op & 0xfe000000) == 0xe0000000)
@@ -332,19 +333,19 @@ void kl1839vm1_device::mk(u32 op)
 		if (BIT(~op, 16)) // madr == 0
 		{
 			const u16 addr = BIT(op, 2, 14);
-			PCM = addr;
+			AMC = addr;
 		}
 		else
 		{
 			u16 addr_hi = BIT(op, 8, 8) << 6;
-			PCM = addr_hi | (R(0x18) & 0x3f);
+			AMC = addr_hi | (R(0x18) & 0x3f);
 		}
 	}
 	else if ((op & 0xfe000000) == 0xe2000000)
 	{
 		u16 addr_hi = BIT(op, 8, 8) << 6;
 		//u8 rpp = BIT(op, 2, 4); // TODO rpp irq code
-		PCM = addr_hi;
+		AMC = addr_hi;
 	}
 }
 
@@ -384,9 +385,9 @@ void kl1839vm1_device::yp(u32 op)
 	{
 		if (!ret)
 		{
-			RV = PCM;
+			RV = AMC;
 		}
-		PCM = addr;
+		AMC = addr;
 	}
 }
 
@@ -411,14 +412,14 @@ void kl1839vm1_device::psch(u32 op)
 	if (madr)
 	{
 		const u16 addr_hi = BIT(op, 8, 8) << 6;
-		PCM = addr_hi | (R(0x18) & 0x3f);
+		AMC = addr_hi | (R(0x18) & 0x3f);
 	}
 	else
 	{
 		if (SCH--)
 		{
 			const u16 addr = BIT(op, 2, 14);
-			PCM = addr;
+			AMC = addr;
 		}
 
 	}
@@ -426,7 +427,7 @@ void kl1839vm1_device::psch(u32 op)
 
 void kl1839vm1_device::rts(u32 op)
 {
-	PCM = RV;
+	AMC = RV;
 }
 
 void kl1839vm1_device::acc(u32 op)
@@ -476,6 +477,7 @@ void kl1839vm1_device::srf(u32 op)
 	}
 	if (BIT(op, 4)) // OCT
 	{
+		m_s_state = false;
 		m_ppp.clear();
 	}
 	if (BIT(op, 2)) // JDZRA
@@ -566,25 +568,26 @@ void kl1839vm1_device::decode_op(u32 op)
 
 void kl1839vm1_device::vax_decode_pc()
 {
+	m_s_state = true;
 	//u32 op = m_program.read_dword(data);
 	//return (op << 4) | 0xe; // M->R
 	switch (PC)
 	{
-		case 0x2000: PCM = 0x90e; m_ppp = { 0x00,       0x20, PC + 4 }; break; // MOVB #20,R0
-		case 0x2004: PCM = 0xd0e; m_ppp = { 0x06, 0x00000023, PC + 7 }; break; // MOVL #23,R6
-		case 0x200b: PCM = 0xd0e; m_ppp = { 0x07, 0x00000022, PC + 7 }; break; // MOVL #22,R7
-		case 0x2012: PCM = 0xdb2; m_ppp = { R(0x07),    0x08, PC + 3 }; break; // MFPR R7,R8
-		case 0x2015: PCM = 0x93c; m_ppp = { R(0x08),    0x80, PC + 4 }; break; // BITB #80,R8
-		case 0x2019: PCM = 0x130; m_ppp = {             0xf7, PC + 2 }; break; // BEQL 2012
-		case 0x201b: PCM = 0x010; m_ppp = {                   PC + 1 }; break; // NOP
-		case 0x201c: PCM = 0x010; m_ppp = {                   PC + 1 }; break; // NOP
-		case 0x201d: PCM = 0x010; m_ppp = {                   PC + 1 }; break; // NOP
-		case 0x201e: PCM = 0xda0; m_ppp = { 0x00,       0x06, PC + 2 }; break; // MTPR R0,R6
-		case 0x2021: PCM = 0x960; m_ppp = { 0x00,             PC + 2 }; break; // INCB R0
-		case 0x2023: PCM = 0x8a0; m_ppp = { 0x00,       0xc0, PC + 3 }; break; // BICB2 #C0,R0
-		case 0x2027: PCM = 0x880; m_ppp = { 0x00,       0x30, PC + 4 }; break; // BISB2 #30,R0
-		case 0x202b: PCM = 0x110; m_ppp = {             0xe5, PC + 2 }; break; // BRB 2012
-		default:     PCM = 0x000; m_ppp = {                   PC     }; break; // HALT
+		case 0x2000: AMC = 0x90e; PCM = 4; m_ppp = { 0x00,       0x20 }; break; // MOVB #20,R0
+		case 0x2004: AMC = 0xd0e; PCM = 7; m_ppp = { 0x06, 0x00000023 }; break; // MOVL #23,R6
+		case 0x200b: AMC = 0xd0e; PCM = 7; m_ppp = { 0x07, 0x00000022 }; break; // MOVL #22,R7
+		case 0x2012: AMC = 0xdb2; PCM = 3; m_ppp = { R(0x07),    0x08 }; break; // MFPR R7,R8
+		case 0x2015: AMC = 0x93c; PCM = 4; m_ppp = { R(0x08),    0x80 }; break; // BITB #80,R8
+		case 0x2019: AMC = 0x130; PCM = 2; m_ppp = {             0xf7 }; break; // BEQL 2012
+		case 0x201b: AMC = 0x010; PCM = 1; m_ppp = {                  }; break; // NOP
+		case 0x201c: AMC = 0x010; PCM = 1; m_ppp = {                  }; break; // NOP
+		case 0x201d: AMC = 0x010; PCM = 1; m_ppp = {                  }; break; // NOP
+		case 0x201e: AMC = 0xda0; PCM = 3; m_ppp = { R(0x06),    0x00 }; break; // MTPR R0,R6
+		case 0x2021: AMC = 0x960; PCM = 2; m_ppp = { 0x00,            }; break; // INCB R0
+		case 0x2023: AMC = 0x8a0; PCM = 4; m_ppp = { R(0x00),    0xc0 }; break; // BICB2 #C0,R0
+		case 0x2027: AMC = 0x880; PCM = 4; m_ppp = { R(0x00),    0x30 }; break; // BISB2 #30,R0
+		case 0x202b: AMC = 0x110; PCM = 2; m_ppp = {             0xe5 }; break; // BRB 2012
+		default:     AMC = 0x000; PCM = 0; m_ppp = {                  }; break; // HALT
 	}
 }
 
@@ -592,7 +595,7 @@ u32 kl1839vm1_device::vax_decoder_pull()
 {
 	u32 data = 0x00;
 
-	if (m_ppp.size() <= 1)
+	if (m_ppp.empty())
 	{
 		LOGVAX("Pooling empty decoder queue\n");
 	}
@@ -619,13 +622,15 @@ void kl1839vm1_device::device_start()
 	save_item(NAME(m_rv));
 	save_item(NAME(m_sch));
 	save_item(NAME(m_rsp));
+	save_item(NAME(m_amc));
 	save_item(NAME(m_ppc));
 	save_item(NAME(m_fp));
 	save_pointer(NAME(m_reg), 0x20);
 	save_pointer(NAME(m_consts), 0x10);
+	save_item(NAME(m_s_state));
 
 	// Register debugger state
-	state_add(KL1839_PCM, "PCM",  PCM).formatstr("%08X");
+	state_add(KL1839_AMC, "AMC",  AMC).formatstr("%08X");
 	state_add(KL1839_RSP, "RSP",  RSP).formatstr("%08s");
 	state_add(KL1839_IF,  "cond", m_fp).formatstr("%08s");
 	state_add(KL1839_RC,  "RC",   RC).formatstr("%08X");
@@ -667,9 +672,9 @@ void kl1839vm1_device::device_start()
 	state_add(VAX_PSL, "PSL", PSL).formatstr("%08X");
 	state_add(VAX_BO,  "BO",  BO).formatstr("%08X");
 
-	state_add(STATE_GENPC, "GENPC", PCM).noshow(); // ???
-	state_add(STATE_GENPCBASE, "CURPC", m_ppc.d).noshow();
-	state_add(STATE_GENFLAGS, "GENFLAGS", PSW).formatstr("%8s").noshow();
+	state_add(STATE_GENPC,     "GENPC",    AMC).noshow();
+	state_add(STATE_GENPCBASE, "CURPC",    m_ppc.d).noshow();
+	state_add(STATE_GENFLAGS,  "GENFLAGS", PSW).formatstr("%8s").noshow();
 
 	set_icountptr(m_icount);
 }
@@ -724,12 +729,13 @@ void kl1839vm1_device::device_reset()
 	for (auto &reg : m_reg)
 		reg.d = 0;
 
-	m_ppc.d = PCM = 0x2000;
+	m_ppc.d = AMC = 0x2000;
 	m_fp = false;
 	RSP = 0;
 	m_vma_tmp.d = 0;
 	RV = 0;
 	SCH = 0;
+	m_s_state = false;
 }
 
 void kl1839vm1_device::execute_set_input(int irqline, int state)
@@ -740,26 +746,26 @@ void kl1839vm1_device::execute_run()
 {
 	do
 	{
-		m_ppc.d = PCM;
+		m_ppc.d = AMC;
 		debugger_instruction_hook(m_ppc.d);
 
-		u32 op = m_microcode.read_dword(PCM);
+		u32 op = m_microcode.read_dword(AMC);
 		m_icount -= 2;
-		++PCM &= 0x3fff;
+		++AMC &= 0x3fff;
 
 		decode_op(op);
 
 		if (op & 1) // S-bit
 		{
-			if (m_ppp.size() == 1)
-			{
-				m_vma_tmp.d = 0;
-				PC = m_ppp.front();
-				m_ppp.pop_front();
-			}
-			else if (!m_ppp.empty())
+			if (!m_ppp.empty())
 			{
 				LOGVAX("Unused decoded data\n");
+				m_ppp.clear();
+			}
+			m_vma_tmp.d = 0;
+			if (m_s_state)
+			{
+				PC += PCM;
 			}
 			vax_decode_pc();
 		}
