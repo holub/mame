@@ -226,11 +226,12 @@ static const u32 mk(std::ostream &stream, u32 op)
 		if (BIT(~op, 16)) // madr == 0
 		{
 			const u16 addr = BIT(op, 2, 14);
-			util::stream_format(stream, "BP%s   :                        ;A=%04X", ret ? " " : "B" ,addr);
+			util::stream_format(stream, "BP%s   :                        ;A=(%04X)", ret ? " " : "B" , addr);
 		}
 		else
 		{
-			stream << "??MK-2";
+			u16 addr_hi = BIT(op, 8, 8) << 6;
+			util::stream_format(stream, "BPV%s  :                        ;A=(%04X+%s)", ret ? " " : "D" , addr_hi, r_name(0x18));
 		}
 	}
 	else if ((op & 0xfe000000) == 0xe2000000)

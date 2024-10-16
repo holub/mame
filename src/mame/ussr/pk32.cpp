@@ -62,10 +62,10 @@ private:
 	u32 term_tx_cs_r();
 	void term_tx_cs_w(u32 data);
 	void kbd_put(u8 data);
-	u32 vax_cmd_decode(u32 offset);
 
 	u8 m_term_data = 0;
 	u16 m_term_status = 0;
+
 };
 
 
@@ -106,11 +106,6 @@ void pk32_state::term_tx_cs_w(u32 data)
 	LOGTERM("TX CS <- %X\n", data);
 }
 
-u32 pk32_state::vax_cmd_decode(u32 offset)
-{
-	u32 op = m_program.read_byte(offset);
-	return op << 4;
-}
 
 
 void pk32_state::pk32_map_microcode(address_map &map)
@@ -181,7 +176,6 @@ void pk32_state::pk32(machine_config &config)
 	m_maincpu->set_addrmap(AS_DATA, &pk32_state::pk32_map_sysram);
 	m_maincpu->set_addrmap(AS_PROGRAM, &pk32_state::pk32_map_ram);
 	m_maincpu->set_addrmap(AS_IO, &pk32_state::pk32_map_io);
-	m_maincpu->in_cmd_decode_cb().set(FUNC(pk32_state::vax_cmd_decode));
 
 	RAM(config, m_ram).set_default_size("16M").set_extra_options("8M,4M");
 

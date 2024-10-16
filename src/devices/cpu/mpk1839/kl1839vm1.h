@@ -6,11 +6,12 @@
 
 #pragma once
 
+#include <deque>
 
 enum
 {
 	KL1839_PCM = STATE_GENPC, KL1839_IF, KL1839_RSP, KL1839_RC, KL1839_RV, KL1839_SCH,
-	VAX_R0, VAX_R1, VAX_R2, VAX_R3, VAX_R4, VAX_R5, VAX_R6, VAX_R7, VAX_R8, VAX_R9, VAX_RA, VAX_RB,
+	VAX_R0, VAX_R1, VAX_R2, VAX_R3, VAX_R4, VAX_R5, VAX_R6, VAX_R7, VAX_R8, VAX_R9, VAX_R10, VAX_R11,
 	VAX_AP, VAX_FP, VAX_SP, VAX_PC,
 	VAX_AK0, VAX_AK1, VAX_AK2, VAX_AK3, VAX_AK4, VAX_AK5, VAX_AK6, VAX_AK7, VAX_AK8,
 	VAX_RNK, VAX_RKA, VAX_PSL, VAX_BO, VAX_INST
@@ -22,9 +23,6 @@ class kl1839vm1_device :  public cpu_device
 public:
 	// construction/destruction
 	kl1839vm1_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
-
-	auto in_cmd_decode_cb() { return m_in_cmd_decode_cb.bind(); }
-
 
 protected:
 	// device-level overrides
@@ -80,10 +78,13 @@ private:
 
 	u32 shr(u32 val, bool va, u8 fo, bool a_c, bool l_r);
 	void kob_process(u8 no, u8 fd, u8 kob, u32 kob_data, u32 data);
-	void kop(u8 kop, u8 fd, u32 x, u32 y, u32 &z, u8 ps, bool va, u8 fo);
+	void kop(u8 kop, u8 fd, u32 x, u32 y, u8 rz, u8 ps, bool va, u8 fo);
 	void mreg_w();
 	void mreg_r();
 	void decode_op(u32 op);
+
+	void vax_decode_pc();
+	u32 vax_decoder_pull();
 
 	address_space_config m_microcode_config;
 	address_space_config m_sysram_config;
@@ -96,7 +97,6 @@ private:
 	memory_access<6, 2, -2, ENDIANNESS_LITTLE>::specific m_io;
 
 	std::unique_ptr<util::disasm_interface> m_vax_dasm;
-	devcb_read32 m_in_cmd_decode_cb;
 
 	PAIR				m_vma_tmp; // does we have int reg for this?
 	PAIR				m_rv;
@@ -107,6 +107,8 @@ private:
 	u32                 m_consts[0x10] = { 0x4, 0x2, 0x8, 0x1, 0x0, 0, 0, 0x66, 0, 0xc00000, 0xffffffff, 0x1f0000, 0x4000000, 0, 0, 0 };
 	PAIR                m_reg[0x20];
 	int                 m_icount;
+
+	std::deque<u32> m_ppp;
 };
 
 DECLARE_DEVICE_TYPE(KL1839VM1, kl1839vm1_device)

@@ -9,10 +9,13 @@
 #include <regex>
 
 
-#define VERBOSE ( LOG_GENERAL )
+#define LOG_VAX    (1U << 1)
+
+#define VERBOSE ( LOG_GENERAL | LOG_VAX )
 #include "logmacro.h"
 
 #define UNIMPLEMENTED(msg) LOG("Unimplemented: %s\n", msg)
+#define LOGVAX(...)        LOGMASKED(LOG_VAX, __VA_ARGS__)
 
 #define RV     m_rv.d    // Return Address
 #define SCH    m_sch.b.l // Counter
@@ -50,7 +53,6 @@ kl1839vm1_device::kl1839vm1_device(const machine_config &mconfig,  const char *t
 	, m_sysram_config("sysram", ENDIANNESS_BIG, 8, 24, 0)
 	, m_ram_config("ram", ENDIANNESS_LITTLE, 8, 24, 0)
 	, m_io_config("io", ENDIANNESS_LITTLE, 32, 6, -2)
-	, m_in_cmd_decode_cb(*this, 0)
 {
 }
 
@@ -122,7 +124,7 @@ u32 kl1839vm1_device::shr(u32 val, bool va, u8 fo, bool a_c, bool l_r)
 	return res;
 }
 
-void kl1839vm1_device::kop(u8 kop, u8 fd, u32 x, u32 y, u32 &z, u8 ps, bool va = false, u8 fo = 0)
+void kl1839vm1_device::kop(u8 kop, u8 fd, u32 x, u32 y, u8 rz, u8 ps, bool va = false, u8 fo = 0)
 {
 	u32 res = 0;
 	RSP &= ~(NF | ZF | VF);
@@ -154,19 +156,20 @@ void kl1839vm1_device::kop(u8 kop, u8 fd, u32 x, u32 y, u32 &z, u8 ps, bool va =
 	switch(fd)
 	{
 		case 0b00:
-			z = res;
+			R(rz) = res;
 			RSP |= BIT(res, 31) ? NF : 0;
 			break;
 		case 0b01:
-			z = (z & 0xffff0000) | (res & 0x0000ffff);
+			R(rz) = (R(rz) & 0xffff0000) | (res & 0x0000ffff);
 			RSP |= BIT(res, 15) ? NF : 0;
 			break;
 		case 0b11:
-			z = (z & 0xffffff00) | (res & 0x000000ff);
+			R(rz) = (R(rz) & 0xffffff00) | (res & 0x000000ff);
 			RSP |= BIT(res, 7) ? NF : 0;
 			break;
 		default: RKA = res; break; // 0b10
 	}
+	if (rz == 0x1f) mreg_w();
 	RSP |= (res == 0) ? ZF : 0;
 
 	switch (ps)
@@ -180,11 +183,11 @@ void kl1839vm1_device::kop(u8 kop, u8 fd, u32 x, u32 y, u32 &z, u8 ps, bool va =
 
 void kl1839vm1_device::mreg_r()
 {
-	const u8 kob_tmp = BIT(m_vma_tmp.d, 24, 3);
-	if (kob_tmp == 0b001)
+	const u8 kob = BIT(m_vma_tmp.d, 24, 3);
+	if ((kob & 0b101) == 0b001)
 	{
-		const u8 no_tmp = BIT(m_vma_tmp.d, 30, 2);
-		switch (no_tmp)
+		const u8 no = BIT(m_vma_tmp.d, 30, 2);
+		switch (no)
 		{
 		case 0b00:
 			BO = m_ram.read_dword(m_vma_tmp.d);
@@ -200,15 +203,19 @@ void kl1839vm1_device::mreg_r()
 			break;
 		}
 	}
+	else
+	{
+		BO = vax_decoder_pull();
+	}
 }
 
 void kl1839vm1_device::mreg_w()
 {
-	const u8 kob_tmp = BIT(m_vma_tmp.d, 24, 3);
-	if (kob_tmp == 0b010)
+	const u8 kob = BIT(m_vma_tmp.d, 24, 3);
+	if ((kob & 0b110) == 0b010)
 	{
-		const u8 no_tmp = BIT(m_vma_tmp.d, 30, 2);
-		switch (no_tmp)
+		const u8 no = BIT(m_vma_tmp.d, 30, 2);
+		switch (no)
 		{
 		case 0b00:
 			m_ram.write_dword(m_vma_tmp.d, BO);
@@ -243,14 +250,14 @@ void kl1839vm1_device::ma(u32 op)
 	const bool px = BIT(op, 1);
 
 	if (am==8 || am>=0xd)
-		UNIMPLEMENTED("Read regs with data mirror");
+		UNIMPLEMENTED("Read const with data mirror");
 
 	if (po | py | px)
 		UNIMPLEMENTED("MA: P*");
 
 	u32 kob_data = kop1 ? R(x) : K(am);
-	kop(kop1, fd, R(x), K(am), R(x), ps, va, fo);
-	if (pd || x == 0x1f) mreg_w();
+	if (pd) mreg_r();
+	kop(kop1, fd, R(x), K(am), x, ps, va, fo);
 	if (va)
 	{
 		kob_data = R(x);
@@ -262,8 +269,8 @@ void kl1839vm1_device::mb(u32 op)
 {
 	const u8 fd = BIT(op, 28, 2);
 	const u8 kop2 = BIT(op, 25, 3);
-	const u8 y = BIT(op, 20, 5);
-	const u8 x = BIT(op, 15, 5);
+	u8 y = BIT(op, 20, 5);
+	u8 x = BIT(op, 15, 5);
 	const u8 ps = BIT(op, 13, 2);
 	const bool va = BIT(op, 12);
 	const u8 no = BIT(op, 10, 2);
@@ -274,13 +281,15 @@ void kl1839vm1_device::mb(u32 op)
 	const bool py = BIT(op, 2);
 	const bool px = BIT(op, 1);
 
-	if (po | py | px)
-		UNIMPLEMENTED("MB: P*");
+	if (po)
+		UNIMPLEMENTED("MB: PO");
 
 	u32 kob_data = kop2 ? R(x) : R(y);
-	if (pd || y == 0x1f) mreg_r();
-	kop(kop2 << 1, fd, R(x), R(y), R(x), ps, va, fo);
-	if (pd || x == 0x1f) mreg_w();
+
+	if (py) y = vax_decoder_pull();
+	if (px) x = vax_decoder_pull();
+	if (pd) mreg_r();
+	kop(kop2 << 1, fd, R(x), R(y), x, ps, va, fo);
 	if (va)
 	{
 		kob_data = R(x);
@@ -306,9 +315,8 @@ void kl1839vm1_device::mc(u32 op)
 	if (pz | py | px)
 		UNIMPLEMENTED("MC: P*");
 
-	if (pd || x == 0x1f) mreg_r();
-	kop(kop2 << 1, fd, R(x), kop2 ? R(y) : R(x), R(z), ps);
-	if (pd || z == 0x1f) mreg_w();
+	if (pd) mreg_r();
+	kop(kop2 << 1, fd, R(x), kop2 ? R(y) : R(x), z, ps);
 }
 
 void kl1839vm1_device::mk(u32 op)
@@ -348,7 +356,7 @@ void kl1839vm1_device::yp(u32 op)
 	const bool v = BIT(op, 25);
 	const bool c = BIT(op, 24);
 	const bool fp = BIT(op, 23);
-	//const bool fpd = BIT(op, 22);
+	const bool fpd = BIT(op, 22);
 	//const bool prb = BIT(op, 21);
 	//const bool rst = BIT(op, 20);
 	//const bool rd = BIT(op, 19);
@@ -360,6 +368,10 @@ void kl1839vm1_device::yp(u32 op)
 	if (fp)
 	{
 		jump = uv == m_fp;
+	}
+	else if (fpd)
+	{
+		jump = true;
 	}
 	else
 	{
@@ -464,7 +476,7 @@ void kl1839vm1_device::srf(u32 op)
 	}
 	if (BIT(op, 4)) // OCT
 	{
-		//--PCM;
+		m_ppp.clear();
 	}
 	if (BIT(op, 2)) // JDZRA
 	{
@@ -483,6 +495,8 @@ void kl1839vm1_device::invalid(u32 op)
 void kl1839vm1_device::kob_process(u8 no, u8 fo, u8 kob, u32 kob_data, u32 data)
 {
 	switch (kob) {
+		case 0b000: // NOP
+			break;
 		case 0b001: // Data Read
 		case 0b010: // Data Write
 		case 0b011: // Read-Modify-Write
@@ -492,16 +506,17 @@ void kl1839vm1_device::kob_process(u8 no, u8 fo, u8 kob, u32 kob_data, u32 data)
 			R(0x17) = data;
 			break;
 		case 0b101: // Read Command
-			PCM = m_in_cmd_decode_cb(data);
-			PC += 4;
+			m_vma_tmp.d = 0;
+			PC = data;
 			break;
 		case 0b110: // Offset Write
 			UNIMPLEMENTED("KOB");
 			break;
 
-		case 0b000: // NOP
 		case 0b111: // Reserve
-		default: break;
+		default:
+			m_vma_tmp.d = 0;
+			break;
 	}
 }
 
@@ -545,9 +560,51 @@ void kl1839vm1_device::decode_op(u32 op)
 		else if ((op & 0xfc000000) == 0xfc000000)
 			srf(op);
 		else
-			invalid(op);
+			UNIMPLEMENTED(op);
 	}
 }
+
+void kl1839vm1_device::vax_decode_pc()
+{
+	//u32 op = m_program.read_dword(data);
+	//return (op << 4) | 0xe; // M->R
+	switch (PC)
+	{
+		case 0x2000: PCM = 0x90e; m_ppp = { 0x00,       0x20, PC + 4 }; break; // MOVB #20,R0
+		case 0x2004: PCM = 0xd0e; m_ppp = { 0x06, 0x00000023, PC + 7 }; break; // MOVL #23,R6
+		case 0x200b: PCM = 0xd0e; m_ppp = { 0x07, 0x00000022, PC + 7 }; break; // MOVL #22,R7
+		case 0x2012: PCM = 0xdb2; m_ppp = { R(0x07),    0x08, PC + 3 }; break; // MFPR R7,R8
+		case 0x2015: PCM = 0x93c; m_ppp = { 0x08,       0x80, PC + 4 }; break; // BITB #80,R8
+		case 0x2019: PCM = 0x130; m_ppp = {             0xf7, PC + 2 }; break; // BEQL 2012
+		case 0x201b: PCM = 0x010; m_ppp = {                   PC + 1 }; break; // NOP
+		case 0x201c: PCM = 0x010; m_ppp = {                   PC + 1 }; break; // NOP
+		case 0x201d: PCM = 0x010; m_ppp = {                   PC + 1 }; break; // NOP
+		case 0x201e: PCM = 0xda0; m_ppp = { 0x00,       0x06, PC + 2 }; break; // MTPR R0,R6
+		case 0x2021: PCM = 0x960; m_ppp = { 0x00,             PC + 2 }; break; // INCB R0
+		case 0x2023: PCM = 0x8a0; m_ppp = { 0x00,       0xc0, PC + 3 }; break; // BICB2 #C0,R0
+		case 0x2027: PCM = 0x880; m_ppp = { 0x00,       0x30, PC + 4 }; break; // BISB2 #30,R0
+		case 0x202b: PCM = 0x110; m_ppp = {             0xe5, PC + 2 }; break; // BRB 2012
+		default:     PCM = 0x000; m_ppp = {                   PC     }; break; // HALT
+	}
+}
+
+u32 kl1839vm1_device::vax_decoder_pull()
+{
+	u32 data = 0x00;
+
+	if (m_ppp.size() <= 1)
+	{
+		LOGVAX("Pooling empty decoder queue");
+	}
+	else
+	{
+		data = m_ppp.front();
+		m_ppp.pop_front();
+	}
+
+	return data;
+}
+
 
 void kl1839vm1_device::device_start()
 {
@@ -577,11 +634,6 @@ void kl1839vm1_device::device_start()
 	state_add_divider(-1);
 	state_add(VAX_INST,   "INST", PC).formatstr("%20s");
 	state_add_divider(-1);
-	state_add(VAX_AP, "AP", AP).formatstr("%08X");
-	state_add(VAX_FP, "FP", FP).formatstr("%08X");
-	state_add(VAX_SP, "SP", SP).formatstr("%08X");
-	state_add(VAX_PC, "PC", PC).formatstr("%08X");
-	state_add_divider(-1);
 	state_add(VAX_R0,  "R0",  R(0)).formatstr("%08X");
 	state_add(VAX_R1,  "R1",  R(1)).formatstr("%08X");
 	state_add(VAX_R2,  "R2",  R(2)).formatstr("%08X");
@@ -592,8 +644,13 @@ void kl1839vm1_device::device_start()
 	state_add(VAX_R7,  "R7",  R(7)).formatstr("%08X");
 	state_add(VAX_R8,  "R8",  R(8)).formatstr("%08X");
 	state_add(VAX_R9,  "R9",  R(9)).formatstr("%08X");
-	state_add(VAX_RA,  "RA",  R(0x0a)).formatstr("%08X");
-	state_add(VAX_RB,  "RB",  R(0x0b)).formatstr("%08X");
+	state_add(VAX_R10, "R10", R(10)).formatstr("%08X");
+	state_add(VAX_R11, "R11", R(11)).formatstr("%08X");
+	state_add_divider(-1);
+	state_add(VAX_AP, "AP", AP).formatstr("%08X");
+	state_add(VAX_FP, "FP", FP).formatstr("%08X");
+	state_add(VAX_SP, "SP", SP).formatstr("%08X");
+	state_add(VAX_PC, "PC", PC).formatstr("%08X");
 	state_add_divider(-1);
 	state_add(VAX_AK0, "AK0", R(0x14)).formatstr("%08X");
 	state_add(VAX_AK1, "AK1", R(0x15)).formatstr("%08X");
@@ -691,6 +748,20 @@ void kl1839vm1_device::execute_run()
 		++PCM &= 0x3fff;
 
 		decode_op(op);
+
+		if (op & 1) // S-bit
+		{
+			if (m_ppp.size() == 1)
+			{
+				PC = m_ppp.front();
+				m_ppp.pop_front();
+			}
+			else if (!m_ppp.empty())
+			{
+				LOGVAX("Unused decoded data");
+			}
+			vax_decode_pc();
+		}
 	} while (m_icount > 0);
 }
 
