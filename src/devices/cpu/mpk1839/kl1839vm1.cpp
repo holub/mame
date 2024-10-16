@@ -167,7 +167,7 @@ void kl1839vm1_device::kop(u8 kop, u8 fd, u32 x, u32 y, u8 rz, u8 ps, bool va = 
 			R(rz) = (R(rz) & 0xffffff00) | (res & 0x000000ff);
 			RSP |= BIT(res, 7) ? NF : 0;
 			break;
-		default: RKA = res; break; // 0b10
+		default: RKA = m_sysram.read_dword(res); break; // 0b10
 	}
 	if (rz == 0x1f) mreg_w();
 	RSP |= (res == 0) ? ZF : 0;
@@ -574,7 +574,7 @@ void kl1839vm1_device::vax_decode_pc()
 		case 0x2004: PCM = 0xd0e; m_ppp = { 0x06, 0x00000023, PC + 7 }; break; // MOVL #23,R6
 		case 0x200b: PCM = 0xd0e; m_ppp = { 0x07, 0x00000022, PC + 7 }; break; // MOVL #22,R7
 		case 0x2012: PCM = 0xdb2; m_ppp = { R(0x07),    0x08, PC + 3 }; break; // MFPR R7,R8
-		case 0x2015: PCM = 0x93c; m_ppp = { 0x08,       0x80, PC + 4 }; break; // BITB #80,R8
+		case 0x2015: PCM = 0x93c; m_ppp = { R(0x08),    0x80, PC + 4 }; break; // BITB #80,R8
 		case 0x2019: PCM = 0x130; m_ppp = {             0xf7, PC + 2 }; break; // BEQL 2012
 		case 0x201b: PCM = 0x010; m_ppp = {                   PC + 1 }; break; // NOP
 		case 0x201c: PCM = 0x010; m_ppp = {                   PC + 1 }; break; // NOP
@@ -594,7 +594,7 @@ u32 kl1839vm1_device::vax_decoder_pull()
 
 	if (m_ppp.size() <= 1)
 	{
-		LOGVAX("Pooling empty decoder queue");
+		LOGVAX("Pooling empty decoder queue\n");
 	}
 	else
 	{
@@ -753,12 +753,13 @@ void kl1839vm1_device::execute_run()
 		{
 			if (m_ppp.size() == 1)
 			{
+				m_vma_tmp.d = 0;
 				PC = m_ppp.front();
 				m_ppp.pop_front();
 			}
 			else if (!m_ppp.empty())
 			{
-				LOGVAX("Unused decoded data");
+				LOGVAX("Unused decoded data\n");
 			}
 			vax_decode_pc();
 		}
