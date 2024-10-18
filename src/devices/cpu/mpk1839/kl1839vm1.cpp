@@ -582,11 +582,12 @@ void kl1839vm1_device::vax_decode_pc()
 		case 0x201b: AMC = 0x010; PCM = 1; m_ppp = {                  }; break; // NOP
 		case 0x201c: AMC = 0x010; PCM = 1; m_ppp = {                  }; break; // NOP
 		case 0x201d: AMC = 0x010; PCM = 1; m_ppp = {                  }; break; // NOP
-		case 0x201e: AMC = 0xda0; PCM = 3; m_ppp = { R(0x06),    0x00 }; break; // MTPR R0,R6
+		case 0x201e: AMC = 0xda0; PCM = 3; m_ppp = { R(0x00), R(0x06) }; break; // MTPR R0,R6
 		case 0x2021: AMC = 0x960; PCM = 2; m_ppp = { 0x00,            }; break; // INCB R0
 		case 0x2023: AMC = 0x8a0; PCM = 4; m_ppp = { R(0x00),    0xc0 }; break; // BICB2 #C0,R0
 		case 0x2027: AMC = 0x880; PCM = 4; m_ppp = { R(0x00),    0x30 }; break; // BISB2 #30,R0
-		case 0x202b: AMC = 0x110; PCM = 2; m_ppp = {             0xe5 }; break; // BRB 2012
+		case 0x202b: AMC = 0x110; PCM = 2 + s8(0xe5);
+		                                   m_ppp = {                  }; break; // BRB 2012
 		default:     AMC = 0x000; PCM = 0; m_ppp = {                  }; break; // HALT
 	}
 }
