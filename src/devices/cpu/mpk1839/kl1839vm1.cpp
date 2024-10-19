@@ -585,9 +585,7 @@ void kl1839vm1_device::vax_decode_pc()
 		case 0x200b: AMC = 0xd0e; m_op_size = 7; m_pcm_queue = { 0x07, 0x00000022 }; break; // MOVL #22,R7
 		case 0x2012: AMC = 0xdb2; m_op_size = 3; m_pcm_queue = { R(0x07),    0x08 }; break; // MFPR R7,R8
 		case 0x2015: AMC = 0x93c; m_op_size = 4; m_pcm_queue = { R(0x08),    0x80 }; break; // BITB #80,R8
-		case 0x2019: { const u32 ttt = s8(0xf7);
-		             AMC = 0x130; m_op_size = 2; m_pcm_queue = {              ttt }; break; // BEQL 2012
-		             }
+		case 0x2019: AMC = 0x130; m_op_size = 2; m_pcm_queue = {    u32(s8(0xf7)) }; break; // BEQL 2012
 		case 0x201b: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
 		case 0x201c: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
 		case 0x201d: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
@@ -595,9 +593,7 @@ void kl1839vm1_device::vax_decode_pc()
 		case 0x2021: AMC = 0x960; m_op_size = 2; m_pcm_queue = { 0x00,            }; break; // INCB R0
 		case 0x2023: AMC = 0x8ae; m_op_size = 4; m_pcm_queue = { 0x00,       0xc0 }; break; // BICB2 #C0,R0
 		case 0x2027: AMC = 0x88e; m_op_size = 4; m_pcm_queue = { 0x00,       0x30 }; break; // BISB2 #30,R0
-		case 0x202b: { const u32 ttt = s8(0xe5);
-		             AMC = 0x110; m_op_size = 2; m_pcm_queue = {              ttt }; break; // BRB 2012
-		             }
+		case 0x202b: AMC = 0x110; m_op_size = 2; m_pcm_queue = {    u32(s8(0xe5)) }; break; // BRB 2012
 		default:     AMC = 0x000; m_op_size = 0; m_pcm_queue = {                  }; break; // HALT
 	}
 }
