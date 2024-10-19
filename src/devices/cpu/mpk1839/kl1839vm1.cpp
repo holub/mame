@@ -168,7 +168,7 @@ void kl1839vm1_device::kop(u8 kop, u8 fd, u32 x, u32 y, u8 rz, u8 ps, bool va = 
 			R(rz) = (R(rz) & 0xffffff00) | (res & 0x000000ff);
 			RSP |= BIT(res, 7) ? NF : 0;
 			break;
-		default: RKA = m_sysram.read_dword(res); break; // 0b10
+		default: break; // 0b10
 	}
 	if (rz == 0x1f) mreg_w();
 	RSP |= (res == 0) ? ZF : 0;
@@ -266,7 +266,14 @@ void kl1839vm1_device::ma(u32 op)
 	{
 		kob_data = R(x);
 	}
-	kob_process(no, fo, kob, kob_data, R(x));
+	if (fd == 0b10)
+	{
+		RKA = m_sysram.read_dword(R(x));
+	}
+	else
+	{
+		kob_process(no, fo, kob, kob_data, R(x));
+	}
 }
 
 void kl1839vm1_device::mb(u32 op)
@@ -586,8 +593,8 @@ void kl1839vm1_device::vax_decode_pc()
 		case 0x201d: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
 		case 0x201e: AMC = 0xda0; m_op_size = 3; m_pcm_queue = { R(0x00), R(0x06) }; break; // MTPR R0,R6
 		case 0x2021: AMC = 0x960; m_op_size = 2; m_pcm_queue = { 0x00,            }; break; // INCB R0
-		case 0x2023: AMC = 0x8a0; m_op_size = 4; m_pcm_queue = { R(0x00),    0xc0 }; break; // BICB2 #C0,R0
-		case 0x2027: AMC = 0x880; m_op_size = 4; m_pcm_queue = { R(0x00),    0x30 }; break; // BISB2 #30,R0
+		case 0x2023: AMC = 0x8ae; m_op_size = 4; m_pcm_queue = { 0x00,       0xc0 }; break; // BICB2 #C0,R0
+		case 0x2027: AMC = 0x88e; m_op_size = 4; m_pcm_queue = { 0x00,       0x30 }; break; // BISB2 #30,R0
 		case 0x202b: { const u32 ttt = s8(0xe5);
 		             AMC = 0x110; m_op_size = 2; m_pcm_queue = {              ttt }; break; // BRB 2012
 		             }
