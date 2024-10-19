@@ -436,5 +436,10 @@ offs_t kl1839vm1_disassembler::disassemble(std::ostream &stream, offs_t pc, cons
 			stream << "<invalid>";
 	}
 
+	if (op & 1)
+	{
+		stream << "S";
+	}
+
 	return 1 | SUPPORTED | step;
 }

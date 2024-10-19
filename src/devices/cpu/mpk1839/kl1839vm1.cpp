@@ -583,23 +583,61 @@ void kl1839vm1_device::vax_decode_pc()
 	m_vma_tmp.d = 0;
 	PC += m_op_size;
 
-	switch (PC)
+	u8 op = m_ram.read_byte(PC);
+	AMC = op << 4;
+	m_op_size = 0;
+	switch (op)
 	{
-		case 0x2000: AMC = 0x90e; m_op_size = 4; m_pcm_queue = { 0x00,       0x20 }; break; // MOVB #20,R0
-		case 0x2004: AMC = 0xd0e; m_op_size = 7; m_pcm_queue = { 0x06, 0x00000023 }; break; // MOVL #23,R6
-		case 0x200b: AMC = 0xd0e; m_op_size = 7; m_pcm_queue = { 0x07, 0x00000022 }; break; // MOVL #22,R7
-		case 0x2012: AMC = 0xdb2; m_op_size = 3; m_pcm_queue = { R(0x07),    0x08 }; break; // MFPR R7,R8
-		case 0x2015: AMC = 0x93c; m_op_size = 4; m_pcm_queue = { R(0x08),    0x80 }; break; // BITB #80,R8
-		case 0x2019: AMC = 0x130; m_op_size = 2; m_pcm_queue = {    u32(s8(0xf7)) }; break; // BEQL 2012
-		case 0x201b: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
-		case 0x201c: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
-		case 0x201d: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
-		case 0x201e: AMC = 0xda0; m_op_size = 3; m_pcm_queue = { R(0x00), R(0x06) }; break; // MTPR R0,R6
-		case 0x2021: AMC = 0x960; m_op_size = 2; m_pcm_queue = { 0x00,            }; break; // INCB R0
-		case 0x2023: AMC = 0x8ae; m_op_size = 4; m_pcm_queue = { 0x00,       0xc0 }; break; // BICB2 #C0,R0
-		case 0x2027: AMC = 0x88e; m_op_size = 4; m_pcm_queue = { 0x00,       0x30 }; break; // BISB2 #30,R0
-		case 0x202b: AMC = 0x110; m_op_size = 2; m_pcm_queue = {    u32(s8(0xe5)) }; break; // BRB 2012
-		default:     AMC = 0x000; m_op_size = 0; m_pcm_queue = {                  }; break; // HALT
+		//   HALT        NOP
+		case 0x00: case 0x01:
+			m_op_size = 1; m_pcm_queue = {};
+			break;
+		//    BRB       BEQL
+		case 0x11: case 0x13:
+			m_op_size = 2;  m_pcm_queue = { u32(s8(m_ram.read_byte(PC + 1))) };
+			break;
+		//   INCB       DECB
+		case 0x96: case 0x97:
+			if ((m_ram.read_byte(PC + 1) & 0xf0) == 0x50)
+			{
+				m_op_size = 2;  m_pcm_queue = { u32(m_ram.read_byte(PC + 1) & 0x0f) };
+			}
+			// + P+C
+			break;
+		//   MTPR
+		case 0xda:
+			if ((m_ram.read_byte(PC + 1) & 0xf0) == 0x50)
+			{
+				m_op_size = 3;  m_pcm_queue = { R(m_ram.read_byte(PC + 1) & 0x0f), R(m_ram.read_byte(PC + 2) & 0x0f) };
+			}
+			// + !R
+			break;
+		default: //LOGVAX("(%x): undecoded OP=%02x .. EXIT\n", PC, op);
+		    m_op_size = 0; break;
+	}
+
+	if (!m_op_size)
+	{
+		LOGVAX("(%x): undecoded OP=%02x .. EXIT\n", PC, op);
+		// TODO to be removed: some OPs at known addresses decoded manually
+		switch (PC)
+		{
+			case 0x2000: AMC = 0x90e; m_op_size = 4; m_pcm_queue = { 0x00,       0x20 }; break; // MOVB #20,R0
+			case 0x2004: AMC = 0xd0e; m_op_size = 7; m_pcm_queue = { 0x06, 0x00000023 }; break; // MOVL #23,R6
+			case 0x200b: AMC = 0xd0e; m_op_size = 7; m_pcm_queue = { 0x07, 0x00000022 }; break; // MOVL #22,R7
+			case 0x2012: AMC = 0xdb2; m_op_size = 3; m_pcm_queue = { R(0x07),    0x08 }; break; // MFPR R7,R8
+			case 0x2015: AMC = 0x93c; m_op_size = 4; m_pcm_queue = { R(0x08),    0x80 }; break; // BITB #80,R8
+			//case 0x2019: AMC = 0x130; m_op_size = 2; m_pcm_queue = {    u32(s8(0xf7)) }; break; // BEQL 2012
+			//case 0x201b: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
+			//case 0x201c: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
+			//case 0x201d: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
+			//case 0x201e: AMC = 0xda0; m_op_size = 3; m_pcm_queue = { R(0x00), R(0x06) }; break; // MTPR R0,R6
+			//case 0x2021: AMC = 0x960; m_op_size = 2; m_pcm_queue = { 0x00,            }; break; // INCB R0
+			case 0x2023: AMC = 0x8ae; m_op_size = 4; m_pcm_queue = { 0x00,       0xc0 }; break; // BICB2 #C0,R0
+			case 0x2027: AMC = 0x88e; m_op_size = 4; m_pcm_queue = { 0x00,       0x30 }; break; // BISB2 #30,R0
+			//case 0x202b: AMC = 0x110; m_op_size = 2; m_pcm_queue = {    u32(s8(0xe5)) }; break; // BRB 2012
+			default:     AMC = 0x000; m_op_size = 0; m_pcm_queue = {                  }; break; // HALT
+		}
 	}
 }
 
