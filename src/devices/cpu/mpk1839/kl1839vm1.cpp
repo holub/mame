@@ -576,8 +576,13 @@ void kl1839vm1_device::decode_op(u32 op)
 
 void kl1839vm1_device::vax_decode_pc()
 {
-	//u32 op = m_program.read_dword(data);
-	//return (op << 4) | 0xe; // M->R
+	if (!m_pcm_queue.empty())
+	{
+		LOGVAX("Unused decoded data\n");
+	}
+	m_vma_tmp.d = 0;
+	PC += m_op_size;
+
 	switch (PC)
 	{
 		case 0x2000: AMC = 0x90e; m_op_size = 4; m_pcm_queue = { 0x00,       0x20 }; break; // MOVB #20,R0
@@ -641,8 +646,6 @@ void kl1839vm1_device::device_start()
 	state_add(KL1839_RV,  "RV",   RV).formatstr("%08X");
 	state_add(KL1839_SCH, "SCH",  SCH).formatstr("%02X");
 	state_add_divider(-1);
-	state_add(VAX_INST,   "INST", PC).formatstr("%20s");
-	state_add_divider(-1);
 	state_add(VAX_R0,  "R0",  R(0)).formatstr("%08X");
 	state_add(VAX_R1,  "R1",  R(1)).formatstr("%08X");
 	state_add(VAX_R2,  "R2",  R(2)).formatstr("%08X");
@@ -660,6 +663,8 @@ void kl1839vm1_device::device_start()
 	state_add(VAX_FP, "FP", FP).formatstr("%08X");
 	state_add(VAX_SP, "SP", SP).formatstr("%08X");
 	state_add(VAX_PC, "PC", PC).formatstr("%08X");
+	state_add_divider(-1);
+	state_add(VAX_INST, "INST", PC).formatstr("%20s");
 	state_add_divider(-1);
 	state_add(VAX_AK0, "AK0", R(0x14)).formatstr("%08X");
 	state_add(VAX_AK1, "AK1", R(0x15)).formatstr("%08X");
@@ -715,6 +720,7 @@ void kl1839vm1_device::state_string_export(const device_state_entry &entry, std:
 			str = string_format("FP%d", m_fp);
 			break;
 		case VAX_INST:
+			if (m_op_size)
 			{
 				address_space &m_space = space(AS_PROGRAM);
 				std::ostringstream buffer;
@@ -723,6 +729,10 @@ void kl1839vm1_device::state_string_export(const device_state_entry &entry, std:
 
 				std::regex reg("\\s+");
 				str = regex_replace(buffer.str(), reg, " ");
+			}
+			else
+			{
+				str = "--------";
 			}
 			break;
 	}
@@ -761,13 +771,6 @@ void kl1839vm1_device::execute_run()
 
 		if (op & 1) // S-bit
 		{
-			if (!m_pcm_queue.empty())
-			{
-				LOGVAX("Unused decoded data\n");
-				m_pcm_queue.clear();
-			}
-			m_vma_tmp.d = 0;
-			PC += m_op_size;
 			vax_decode_pc();
 		}
 	} while (m_icount > 0);
