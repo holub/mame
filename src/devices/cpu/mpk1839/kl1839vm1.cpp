@@ -588,57 +588,101 @@ void kl1839vm1_device::vax_decode_pc()
 	m_op_size = 0;
 	switch (op)
 	{
-		//   HALT        NOP
-		case 0x00: case 0x01:
+		//   HALT        NOP        REI        BPT        RET        RSB     LDPCTX     SVPCTX
+		case 0x00: case 0x01: case 0x02: case 0x03: case 0x04: case 0x05: case 0x06: case 0x07:
 			m_op_size = 1; m_pcm_queue = {};
 			break;
-		//    BRB       BEQL
-		case 0x11: case 0x13:
+
+		//   BSBB        BRB BNEQ/BNEQU BEQL/BEQLU       BGTR       BLEQ
+		case 0x10: case 0x11: case 0x12: case 0x13: case 0x14: case 0x15:
+		//   BGEQ       BLSS      BGTRU      BLEQU        BVC        BVS  BCC/BGEQU  BCS/BLSSU
+		case 0x18: case 0x19: case 0x1a: case 0x1b: case 0x1c: case 0x1d: case 0x1e: case 0x1f:
 			m_op_size = 2;  m_pcm_queue = { u32(s8(m_ram.read_byte(PC + 1))) };
 			break;
+
+		//  BISB2      BICB2
+		case 0x88: case 0x8a:
+		//   MOVB
+		case 0x90:
+			{
+				u32 p = m_ram.read_dword(PC + 1);
+				if ((p & 0xf000ff) == 0x50008f)
+				{
+					m_op_size = 4; m_pcm_queue = { (p >> 16) & 0x0f, (p >> 8) & 0xff };
+					AMC += 0x0e;
+				}
+			}
+			break;
+
+		//   BITB
+		case 0x93:
+			{
+				u32 p = m_ram.read_dword(PC + 1);
+				if ((p & 0xf000ff) == 0x50008f)
+				{
+					m_op_size = 4; m_pcm_queue = { R((p >> 16) & 0x0f), (p >> 8) & 0xff };
+					AMC += 0x0c;
+				}
+			}
+			break;
+
 		//   INCB       DECB
 		case 0x96: case 0x97:
-			if ((m_ram.read_byte(PC + 1) & 0xf0) == 0x50)
 			{
-				m_op_size = 2;  m_pcm_queue = { u32(m_ram.read_byte(PC + 1) & 0x0f) };
+				u32 p = m_ram.read_byte(PC + 1);
+				if ((p & 0xf0) == 0x50)
+				{
+					m_op_size = 2;  m_pcm_queue = { p & 0x0f };
+				}
+				// + P+C
 			}
-			// + P+C
 			break;
+
+		//   MOVL
+		case 0xd0:
+			{
+				if (m_ram.read_byte(PC + 1) == 0x8f)
+				{
+					u32 p2 = m_ram.read_dword(PC + 2);
+					u32 p1 = m_ram.read_byte(PC + 6);
+					if ((p1 & 0xf0) == 0x50)
+					{
+						m_op_size = 7;  m_pcm_queue = { p1 & 0x0f, p2 };
+						AMC += 0x0e;
+					}
+				}
+			}
+			break;
+
 		//   MTPR
 		case 0xda:
-			if ((m_ram.read_byte(PC + 1) & 0xf0) == 0x50)
 			{
-				m_op_size = 3;  m_pcm_queue = { R(m_ram.read_byte(PC + 1) & 0x0f), R(m_ram.read_byte(PC + 2) & 0x0f) };
+				u16 p = m_ram.read_word(PC + 1);
+				if ((p & 0xf0f0) == 0x5050)
+				{
+					m_op_size = 3;  m_pcm_queue = { R(p & 0x0f), R((p >> 8) & 0x0f) };
+				}
+				// + !R
 			}
-			// + !R
 			break;
-		default: //LOGVAX("(%x): undecoded OP=%02x .. EXIT\n", PC, op);
-		    m_op_size = 0; break;
+
+		//   MFPR
+		case 0xdb:
+			{
+				u32 p = m_ram.read_word(PC + 1);
+				if ((p & 0xf0f0) == 0x5050)
+				{
+					m_op_size = 3; m_pcm_queue = { R(p & 0x0f), (p >> 8) & 0x0f };
+					AMC += 0x02;
+				}
+			}
+			break;
+
+		default: m_op_size = 0; m_pcm_queue = {}; AMC = 0; break;
 	}
 
 	if (!m_op_size)
-	{
 		LOGVAX("(%x): undecoded OP=%02x .. EXIT\n", PC, op);
-		// TODO to be removed: some OPs at known addresses decoded manually
-		switch (PC)
-		{
-			case 0x2000: AMC = 0x90e; m_op_size = 4; m_pcm_queue = { 0x00,       0x20 }; break; // MOVB #20,R0
-			case 0x2004: AMC = 0xd0e; m_op_size = 7; m_pcm_queue = { 0x06, 0x00000023 }; break; // MOVL #23,R6
-			case 0x200b: AMC = 0xd0e; m_op_size = 7; m_pcm_queue = { 0x07, 0x00000022 }; break; // MOVL #22,R7
-			case 0x2012: AMC = 0xdb2; m_op_size = 3; m_pcm_queue = { R(0x07),    0x08 }; break; // MFPR R7,R8
-			case 0x2015: AMC = 0x93c; m_op_size = 4; m_pcm_queue = { R(0x08),    0x80 }; break; // BITB #80,R8
-			//case 0x2019: AMC = 0x130; m_op_size = 2; m_pcm_queue = {    u32(s8(0xf7)) }; break; // BEQL 2012
-			//case 0x201b: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
-			//case 0x201c: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
-			//case 0x201d: AMC = 0x010; m_op_size = 1; m_pcm_queue = {                  }; break; // NOP
-			//case 0x201e: AMC = 0xda0; m_op_size = 3; m_pcm_queue = { R(0x00), R(0x06) }; break; // MTPR R0,R6
-			//case 0x2021: AMC = 0x960; m_op_size = 2; m_pcm_queue = { 0x00,            }; break; // INCB R0
-			case 0x2023: AMC = 0x8ae; m_op_size = 4; m_pcm_queue = { 0x00,       0xc0 }; break; // BICB2 #C0,R0
-			case 0x2027: AMC = 0x88e; m_op_size = 4; m_pcm_queue = { 0x00,       0x30 }; break; // BISB2 #30,R0
-			//case 0x202b: AMC = 0x110; m_op_size = 2; m_pcm_queue = {    u32(s8(0xe5)) }; break; // BRB 2012
-			default:     AMC = 0x000; m_op_size = 0; m_pcm_queue = {                  }; break; // HALT
-		}
-	}
 }
 
 u32 kl1839vm1_device::vax_pcm_pull()
