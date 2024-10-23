@@ -248,6 +248,7 @@ private:
 	u8 m_conf;
 	bool m_conf_loading;
 	bool m_starting;
+	u16 m_bitstream_count;
 	bool m_dos; // 0-on, 1-off
 	bool m_cash_on;
 
@@ -1110,15 +1111,22 @@ u8 sprinter_state::bootstrap_r(offs_t offset)
 
 void sprinter_state::bootstrap_w(offs_t offset, u8 data)
 {
-	if (m_conf_loading)
+	if (!m_conf_loading)
 	{
-		m_conf_loading = 0;
-		m_conf = !(m_maincpu->csbr_r() & 0x0f); // cs0 disabled => loader reads config from fastram (which is Game Config)
-		m_ram_pages[0x2e] = m_conf ? 0x41 : 0x00;
-		machine().schedule_soft_reset();
+		m_program.write_byte(0x10000 | u16(offset), data);
 	}
 	else
-		m_program.write_byte(0x10000 | u16(offset), data);
+	{
+		m_fastram[offset & 0xffff] = data;
+		if (++m_bitstream_count > 0x3ff)
+		{
+			m_conf_loading = 0;
+			machine().debug_break();
+			m_conf = !(m_maincpu->csbr_r() & 0x0f); // cs0 disabled => loader reads config from fastram (which is Game Config)
+			m_ram_pages[0x2e] = m_conf ? 0x41 : 0x00;
+			machine().schedule_soft_reset();
+		}
+	}
 }
 
 u8 sprinter_state::ram_r(offs_t offset)
@@ -1397,6 +1405,7 @@ void sprinter_state::machine_start()
 	save_item(NAME(m_joy2_ctrl));
 	save_item(NAME(m_conf));
 	save_item(NAME(m_conf_loading));
+	save_item(NAME(m_bitstream_count));
 	save_item(NAME(m_starting));
 	save_item(NAME(m_dos));
 	save_item(NAME(m_cash_on));
@@ -1530,6 +1539,7 @@ void sprinter_state::machine_reset()
 
 	if (m_conf_loading)
 	{
+		m_bitstream_count = 0;
 		m_bank_rom[0]->set_entry(0x0c);
 		m_bank_view0.select(1);
 		m_bank_view3.disable();
