@@ -345,7 +345,7 @@ void kl1839vm1_device::mb(u32 op)
 
 	u32 kob_data = kop2 ? R(x) : R(y);
 
-	if (m_pcm_queue_size >= 0)
+	if (m_pcm_queue_size > 0)
 	{
 		if (py)
 			y = vax_pcm_pull();
@@ -383,7 +383,7 @@ void kl1839vm1_device::mc(u32 op)
 	const bool py = BIT(op, 2);
 	const bool px = BIT(op, 1);
 
-	if (m_pcm_queue_size >= 0)
+	if (m_pcm_queue_size > 0)
 	{
 		if (py)
 			y = vax_pcm_pull();
@@ -661,7 +661,7 @@ void kl1839vm1_device::decode_op(u32 op)
 
 void kl1839vm1_device::vax_decode_pc()
 {
-	if (m_pcm_queue_size >= 0)
+	if (m_pcm_queue_size > 0)
 	{
 		LOGVAX("Unused decoded data\n");
 	}
