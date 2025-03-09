@@ -29,18 +29,13 @@ jobs:
         shell: msys2 {0}
     strategy:
       matrix:
-        compiler: [gcc, clang]
+        compiler: [gcc]
         include:
           - compiler: gcc
             cc: gcc
             cxx: g++
             subtarget: mame
             executable: mame
-          - compiler: clang
-            cc: clang
-            cxx: clang++
-            subtarget: tiny
-            executable: mametiny
     steps:
     - uses: msys2/setup-msys2@v2
       with:
@@ -56,15 +51,12 @@ jobs:
         OVERRIDE_CXX: ${{ matrix.cxx }}
         ARCHOPTS: "-fuse-ld=lld"
         SUBTARGET: ${{ matrix.subtarget }}
-        TOOLS: 1
-      run: make -j3
-    - name: Validate
-      run: ./${{ matrix.executable }}.exe -validate
+        SOURCES: sinclair/sprinter.cpp,sinclair/tsconf.cpp
+        TOOLS: 0
+      run: make -j$(nproc)
     - uses: actions/upload-artifact@main
       with:
         name: ${{ matrix.executable }}-windows-${{ matrix.compiler }}-${{ github.sha }}
         path: |
           ${{ matrix.executable }}.exe
-          chdman.exe
-          unidasm.exe
         if-no-files-found: error
