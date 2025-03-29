@@ -200,7 +200,6 @@ private:
 	u8 beta_disable_r(offs_t offset);
 
 	void tsconf_io(address_map &map) ATTR_COLD;
-	void tsconf_ioext(address_map &map) ATTR_COLD;
 	void tsconf_mem(address_map &map) ATTR_COLD;
 	void tsconf_switch(address_map &map) ATTR_COLD;
 
