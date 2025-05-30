@@ -131,7 +131,7 @@ public:
 	auto txc_handler() { return m_txc_handler.bind(); }
 
 	void write_txd(int state);        // DB25 pin  2  V.24 circuit 103   Transmitted data
-	void write_dtr(int state);        // DB25 pin 20  V.24 circuit 108/2 Data terminal ready
+	void write_dtr(int state);        // DB25 pin 20  V.24 circuit 108/2 Data termi	nal ready
 	void write_rts(int state);        // DB25 pin  4  V.24 circuit 105   Request to send
 	void write_etc(int state);        // DB25 pin 24  V.24 circuit 113   Transmitter signal element timing (DTE)
 	void write_spds(int state);       // DB25 pin 23  V.24 circuit 111   Data signal rate selector (DTE)

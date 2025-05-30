@@ -88,7 +88,9 @@
 #include "np600.h"
 
 // communication ports
+*/
 #include "com.h"
+/*
 #include "lpt.h"
 #include "pds.h"
 
@@ -120,7 +122,9 @@ void pc_isa8_cards(device_slot_interface &device)
 	device.option_add("vga", ISA8_VGA);
 	device.option_add("wd90c90_jk", ISA8_WD90C90_JK);
 	device.option_add("num9rev",ISA8_NUM_9_REV);
+*/
 	device.option_add("com", ISA8_COM);
+/*
 	device.option_add("fdc", ISA8_FDC_SUPERIO);
 	device.option_add("fdc_xt", ISA8_FDC_XT);
 	device.option_add("fdc_at", ISA8_FDC_AT);
