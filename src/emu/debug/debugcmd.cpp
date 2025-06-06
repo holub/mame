@@ -2007,6 +2007,9 @@ void debugger_commands::execute_rewind(const std::vector<std::string_view> &para
 
 void debugger_commands::execute_save(int spacenum, const std::vector<std::string_view> &params)
 {
+	if (execute_save_try_memory(params))
+		return;
+
 	u64 offset, endoffset, length;
 	address_space *space;
 
@@ -2093,31 +2096,42 @@ void debugger_commands::execute_save(int spacenum, const std::vector<std::string
 	m_console.printf("Data saved successfully\n");
 }
 
-
 /*-------------------------------------------------
-    execute_saveregion - execute the save command on region memory
+    execute_savememory - execute the save command on memory
 -------------------------------------------------*/
 
-void debugger_commands::execute_saveregion(const std::vector<std::string_view> &params)
+bool debugger_commands::execute_save_try_memory(const std::vector<std::string_view> &params)
 {
-	u64 offset, length;
-	memory_region *region;
+	u64 offset = u64(-1);
+	memory_region *region = nullptr;
+	memory_share *share = nullptr;
+	if (!m_console.validate_address_with_memory_parameter(params[1], offset, region, share))
+		return false; // not memory case
 
-	// validate parameters
-	if (!m_console.validate_number_parameter(params[1], offset))
-		return;
-	if (!m_console.validate_number_parameter(params[2], length))
-		return;
-	if (!m_console.validate_memory_region_parameter(params[3], region))
-		return;
+	u64 length;
+	if (offset == u64(-1) || !m_console.validate_number_parameter(params[2], length) || (region == nullptr && share == nullptr))
+		return true;
 
-	if (offset >= region->bytes())
+	u32 msize;
+	u8 *base;
+	if (region != nullptr)
+	{
+		msize = region->bytes();
+		base = region->base();
+	}
+	else // if (share != nullptr)
+	{
+		msize = share->bytes();
+		base = reinterpret_cast<u8 *>(share->ptr());
+	}
+
+	if (offset >= msize)
 	{
 		m_console.printf("Invalid offset\n");
-		return;
+		return true;
 	}
-	if ((length <= 0) || ((length + offset) >= region->bytes()))
-		length = region->bytes() - offset;
+	if ((length <= 0) || ((length + offset) >= msize))
+		length = msize - offset;
 
 	/* open the file */
 	std::string const filename(params[0]);
@@ -2125,12 +2139,24 @@ void debugger_commands::execute_saveregion(const std::vector<std::string_view> &
 	if (!f)
 	{
 		m_console.printf("Error opening file '%s'\n", params[0]);
-		return;
+		return true;
 	}
-	fwrite(region->base() + offset, 1, length, f);
+	fwrite(base + offset, 1, length, f);
 
 	fclose(f);
 	m_console.printf("Data saved successfully\n");
+
+	return true;
+}
+
+
+/*-------------------------------------------------
+    execute_saveregion - execute the save command on region memory
+-------------------------------------------------*/
+
+void debugger_commands::execute_saveregion(const std::vector<std::string_view> &params)
+{
+	execute_save(-1, std::vector<std::string_view>{ params[0], std::string(params[1]) + std::string(params[3]) + ".m", params[2] });
 }
 
 
@@ -2140,6 +2166,9 @@ void debugger_commands::execute_saveregion(const std::vector<std::string_view> &
 
 void debugger_commands::execute_load(int spacenum, const std::vector<std::string_view> &params)
 {
+	if (execute_load_try_memory(params))
+		return;
+
 	u64 offset, endoffset, length = 0;
 	address_space *space;
 
@@ -2247,31 +2276,43 @@ void debugger_commands::execute_load(int spacenum, const std::vector<std::string
 		m_console.printf("Data loaded successfully to memory : 0x%X to 0x%X\n", offset, i-1);
 }
 
-
 /*-------------------------------------------------
-    execute_loadregion - execute the load command on region memory
+    execute_loadmemory - execute the load command on memory
 -------------------------------------------------*/
 
-void debugger_commands::execute_loadregion(const std::vector<std::string_view> &params)
+bool debugger_commands::execute_load_try_memory(const std::vector<std::string_view> &params)
 {
-	u64 offset, length;
-	memory_region *region;
+	u64 offset = u64(-1);
+	memory_region *region = nullptr;
+	memory_share *share = nullptr;
+	if (!m_console.validate_address_with_memory_parameter(params[1], offset, region, share))
+		return false; // not memory case
 
+	u64 length;
 	// validate parameters
-	if (!m_console.validate_number_parameter(params[1], offset))
-		return;
-	if (!m_console.validate_number_parameter(params[2], length))
-		return;
-	if (!m_console.validate_memory_region_parameter(params[3], region))
-		return;
+	if (offset == u64(-1) || !m_console.validate_number_parameter(params[2], length) || (region == nullptr && share == nullptr))
+		return true;
 
-	if (offset >= region->bytes())
+	u32 msize;
+	u8 *base;
+	if (region != nullptr)
+	{
+		msize = region->bytes();
+		base = region->base();
+	}
+	else // if (share != nullptr)
+	{
+		msize = share->bytes();
+		base = reinterpret_cast<u8 *>(share->ptr());
+	}
+
+	if (offset >= msize)
 	{
 		m_console.printf("Invalid offset\n");
-		return;
+		return true;
 	}
-	if ((length <= 0) || ((length + offset) >= region->bytes()))
-		length = region->bytes() - offset;
+	if ((length <= 0) || ((length + offset) >= msize))
+		length = msize - offset;
 
 	// open the file
 	std::string filename(params[0]);
@@ -2279,7 +2320,7 @@ void debugger_commands::execute_loadregion(const std::vector<std::string_view> &
 	if (!f)
 	{
 		m_console.printf("Error opening file '%s'\n", params[0]);
-		return;
+		return true;
 	}
 
 	fseek(f, 0L, SEEK_END);
@@ -2290,10 +2331,22 @@ void debugger_commands::execute_loadregion(const std::vector<std::string_view> &
 	if (length >= size)
 		length = size;
 
-	fread(region->base() + offset, 1, length, f);
+	fread(base + offset, 1, length, f);
 
 	fclose(f);
 	m_console.printf("Data loaded successfully to memory : 0x%X to 0x%X\n", offset, offset + length - 1);
+
+	return true;
+}
+
+
+/*-------------------------------------------------
+    execute_loadregion - execute the load command on region memory
+-------------------------------------------------*/
+
+void debugger_commands::execute_loadregion(const std::vector<std::string_view> &params)
+{
+	execute_load(-1, std::vector<std::string_view>{ params[0], std::string(params[1]) + std::string(params[3]) + ".m", params[2] });
 }
 
 
@@ -2303,7 +2356,10 @@ void debugger_commands::execute_loadregion(const std::vector<std::string_view> &
 
 void debugger_commands::execute_dump(int spacenum, const std::vector<std::string_view> &params)
 {
-	// validate parameters
+	if (execute_dump_try_memory(params))
+		return;
+
+		// validate parameters
 	address_space *space;
 	u64 offset;
 	if (!m_console.validate_target_address_parameter(params[1], spacenum, space, offset))
@@ -2460,6 +2516,26 @@ void debugger_commands::execute_dump(int spacenum, const std::vector<std::string
 	m_console.printf("Data dumped successfully\n");
 }
 
+/*-------------------------------------------------
+    execute_dumpmemory - execute the dump command on memory
+-------------------------------------------------*/
+
+bool debugger_commands::execute_dump_try_memory(const std::vector<std::string_view> &params)
+{
+	u64 offset = u64(-1);
+	memory_region *region = nullptr;
+	memory_share *share = nullptr;
+	if (!m_console.validate_address_with_memory_parameter(params[1], offset, region, share))
+		return false;
+
+	u64 length;
+	if (offset == u64(-1) || !m_console.validate_number_parameter(params[2], length) || (region == nullptr && share == nullptr))
+		return true; // not memory case
+
+	// ...
+
+	return true;
+}
 
 //-------------------------------------------------
 //  execute_strdump - execute the strdump command
@@ -2467,6 +2543,9 @@ void debugger_commands::execute_dump(int spacenum, const std::vector<std::string
 
 void debugger_commands::execute_strdump(int spacenum, const std::vector<std::string_view> &params)
 {
+	if (execute_strdump_try_memory(params))
+		return;
+
 	// validate parameters
 	u64 offset;
 	if (!m_console.validate_number_parameter(params[1], offset))
@@ -2635,6 +2714,26 @@ void debugger_commands::execute_strdump(int spacenum, const std::vector<std::str
 	// close the file
 	fclose(f);
 	m_console.printf("Data dumped successfully\n");
+}
+/*-------------------------------------------------
+    execute_strdumpmemory - execute the strdump command on memory
+-------------------------------------------------*/
+
+bool debugger_commands::execute_strdump_try_memory(const std::vector<std::string_view> &params)
+{
+	u64 offset = u64(-1);
+	memory_region *region = nullptr;
+	memory_share *share = nullptr;
+	if (!m_console.validate_address_with_memory_parameter(params[1], offset, region, share))
+		return false; // not memory case
+
+	u64 length;
+	if (offset == u64(-1) || !m_console.validate_number_parameter(params[2], length) || (region == nullptr && share == nullptr))
+		return true;
+
+	// ...
+
+	return true;
 }
 
 
@@ -3139,6 +3238,9 @@ void debugger_commands::execute_cheatundo(const std::vector<std::string_view> &p
 
 void debugger_commands::execute_find(int spacenum, const std::vector<std::string_view> &params)
 {
+	if (execute_find_try_memory(params))
+		return;
+
 	u64 offset, length;
 	address_space *space;
 
@@ -3262,6 +3364,27 @@ void debugger_commands::execute_find(int spacenum, const std::vector<std::string
 		m_console.printf("Not found\n");
 }
 
+/*-------------------------------------------------
+    execute_findmemory - execute the find command on memory
+-------------------------------------------------*/
+
+bool debugger_commands::execute_find_try_memory(const std::vector<std::string_view> &params)
+{
+	u64 offset = u64(-1);
+	memory_region *region = nullptr;
+	memory_share *share = nullptr;
+	if (!m_console.validate_address_with_memory_parameter(params[0], offset, region, share))
+		return false; // not memory case
+
+	u64 length;
+	if (offset == u64(-1) || !m_console.validate_number_parameter(params[1], length) || (region == nullptr && share == nullptr))
+		return true;
+
+	// ...
+
+	return true;
+}
+
 
 //-------------------------------------------------
 //  execute_fill - execute the fill command
@@ -3269,6 +3392,9 @@ void debugger_commands::execute_find(int spacenum, const std::vector<std::string
 
 void debugger_commands::execute_fill(int spacenum, const std::vector<std::string_view> &params)
 {
+	if (execute_fill_try_memory(params))
+		return;
+
 	u64 offset, length;
 	address_space *space;
 
@@ -3369,6 +3495,27 @@ void debugger_commands::execute_fill(int spacenum, const std::vector<std::string
 				count -= fill_data_size[j];
 		}
 	}
+}
+
+/*-------------------------------------------------
+    execute_fillmemory - execute the fill command on memory
+-------------------------------------------------*/
+
+bool debugger_commands::execute_fill_try_memory(const std::vector<std::string_view> &params)
+{
+	u64 offset = u64(-1);
+	memory_region *region = nullptr;
+	memory_share *share = nullptr;
+	if (!m_console.validate_address_with_memory_parameter(params[0], offset, region, share))
+		return false; // not memory case
+
+	u64 length;
+	if (offset == u64(-1) || !m_console.validate_number_parameter(params[1], length) || (region == nullptr && share == nullptr))
+		return true;
+
+	// ...
+
+	return true;
 }
 
 
