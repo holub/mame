@@ -131,17 +131,20 @@ enum
  ****************************************************************************/
 DEFINE_DEVICE_TYPE(Z80DMA, z80dma_device, "z80dma", "Z80 DMA Controller")
 
+ALLOW_SAVE_TYPE(z80dma_device::dma_mode);
+
 /****************************************************************************
  * z80dma_device - constructor
  ****************************************************************************/
 z80dma_device::z80dma_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
-	: z80dma_device(mconfig, Z80DMA, tag, owner, clock)
+	: z80dma_device(mconfig, Z80DMA, tag, owner, clock, dma_mode::ZILOG)
 {
 }
 
-z80dma_device::z80dma_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock)
+z80dma_device::z80dma_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock, dma_mode dma_mode)
 	: device_t(mconfig, type, tag, owner, clock)
 	, device_z80daisy_interface(mconfig, *this)
+	, m_dma_mode(dma_mode)
 	, m_out_busreq_cb(*this)
 	, m_out_int_cb(*this)
 	, m_out_ieo_cb(*this)
@@ -162,6 +165,7 @@ void z80dma_device::device_start()
 	m_timer = timer_alloc(FUNC(z80dma_device::clock_w), this);
 
 	// register for state saving
+	save_item(NAME(m_dma_mode));
 	save_item(NAME(m_regs));
 	save_item(NAME(m_regs_follow));
 	save_item(NAME(m_num_follow));
@@ -179,6 +183,7 @@ void z80dma_device::device_start()
 	save_item(NAME(m_rdy));
 	save_item(NAME(m_force_ready));
 	save_item(NAME(m_wait));
+	save_item(NAME(m_waits_extra));
 	save_item(NAME(m_busrq_ack));
 	save_item(NAME(m_is_pulse));
 	save_item(NAME(m_latch));
@@ -197,6 +202,7 @@ void z80dma_device::device_reset()
 	m_rdy = 0;
 	m_force_ready = 0;
 	m_wait = 0;
+	m_waits_extra = 0;
 	m_num_follow = 0;
 	m_read_num_follow = m_read_cur_follow = 0;
 	m_reset_pointer = 0;
@@ -445,10 +451,9 @@ void z80dma_device::do_write()
 			break;
 	}
 
+	m_byte_counter++;
 	m_addressA += PORTA_FIXED ? 0 : PORTA_INC ? 1 : -1;
 	m_addressB += PORTB_FIXED ? 0 : PORTB_INC ? 1 : -1;
-
-	m_byte_counter++;
 }
 
 /****************************************************************************
@@ -497,7 +502,8 @@ TIMER_CALLBACK_MEMBER(z80dma_device::clock_w)
 				}
 
 				const attotime clock = clocks_to_attotime(1);
-				const attotime next = clock * (3 - ((PORTA_IS_SOURCE ? PORTA_TIMING : PORTB_TIMING) & 0x03));
+				const attotime next = clock * (3 - ((PORTA_IS_SOURCE ? PORTA_TIMING : PORTB_TIMING) & 0x03) + m_waits_extra);
+				m_waits_extra = 0;
 				m_timer->adjust(next, 0, clock);
 
 				m_dma_seq = SEQ_TRANS1_READ_SOURCE;
@@ -517,7 +523,8 @@ TIMER_CALLBACK_MEMBER(z80dma_device::clock_w)
 		case SEQ_TRANS1_INC_DEC_DEST_ADDRESS:
 			{
 				const attotime clock = clocks_to_attotime(1);
-				const attotime next = clock * (3 - ((PORTB_IS_SOURCE ? PORTA_TIMING : PORTB_TIMING) & 0x03));
+				const attotime next = clock * (3 - ((PORTB_IS_SOURCE ? PORTA_TIMING : PORTB_TIMING) & 0x03) + m_waits_extra);
+				m_waits_extra = 0;
 				m_timer->adjust(next, 0, clock);
 
 				m_dma_seq = SEQ_TRANS1_WRITE_DEST;
@@ -672,7 +679,7 @@ void z80dma_device::write(u8 data)
 			if (data & 0x10)
 				m_regs_follow[m_num_follow++] = GET_REGNUM(MATCH_BYTE);
 
-			if (BIT(data, 6))
+			if (BIT(data, 6) && m_dma_mode != dma_mode::UA858D)
 			{
 				enable();
 			}
@@ -875,7 +882,7 @@ TIMER_CALLBACK_MEMBER(z80dma_device::rdy_write_callback)
 void z80dma_device::rdy_w(int state)
 {
 	LOG("Z80DMA RDY: %d Active High: %d\n", state, READY_ACTIVE_HIGH);
-	machine().scheduler().synchronize(timer_expired_delegate(FUNC(z80dma_device::rdy_write_callback),this), state);
+	machine().scheduler().synchronize(timer_expired_delegate(FUNC(z80dma_device::rdy_write_callback), this), state);
 }
 
 /****************************************************************************
@@ -884,4 +891,12 @@ void z80dma_device::rdy_w(int state)
 void z80dma_device::bai_w(int state)
 {
 	m_busrq_ack = state;
+}
+
+
+DEFINE_DEVICE_TYPE(UA858D, ua858d_device, "ua858d", "UA858D DMA Controller")
+
+ua858d_device::ua858d_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
+	: z80dma_device(mconfig, UA858D, tag, owner, clock, dma_mode::UA858D)
+{
 }

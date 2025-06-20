@@ -68,6 +68,7 @@ public:
 	specnext_state(const machine_config &mconfig, device_type type, const char *tag)
 		: spectrum_128_state(mconfig, type, tag)
 		, m_maincpu(*this, "maincpu")
+		, m_io_shadow_view(*this, "io_shadow_view")
 		, m_bank_boot_rom(*this, "bootrom")
 		, m_bank_ram(*this, "bank_ram%u", 0U)
 		, m_view0(*this, "mem_view0")
@@ -80,7 +81,7 @@ public:
 		, m_view7(*this, "mem_view7")
 		, m_copper(*this, "copper")
 		, m_ctc(*this, "ctc")
-		, m_dma(*this, "ndma")
+		, m_dma(*this, "dma")
 		, m_i2cmem(*this, "i2cmem")
 		, m_sdcard(*this, "sdcard")
 		, m_ay(*this, "ay%u", 0U)
@@ -123,6 +124,7 @@ protected:
 	void mmu_x2_w(offs_t bank, u8 data);
 	u8 dma_r(bool dma_mode);
 	void dma_w(bool dma_mode, u8 data);
+	u8 dma_mreq_r(offs_t offset);
 	u8 spi_data_r();
 	void spi_data_w(u8 data);
 	void spi_miso_w(u8 data);
@@ -287,6 +289,7 @@ private:
 	void port_e7_reg_w(u8 data);
 
 	memory_access<8, 0, 0, ENDIANNESS_LITTLE>::specific m_next_regs;
+	memory_view m_io_shadow_view;
 	memory_bank_creator m_bank_boot_rom;
 	memory_bank_array_creator<8> m_bank_ram;
 	memory_view m_view0, m_view1, m_view2, m_view3, m_view4, m_view5, m_view6, m_view7;
@@ -1152,6 +1155,15 @@ void specnext_state::dma_w(bool dma_mode, u8 data)
 {
 	m_dma->dma_mode_w(dma_mode);
 	m_dma->write(data);
+}
+
+u8 specnext_state::dma_mreq_r(offs_t offset)
+{
+	if (m_nr_07_cpu_speed == 0b11)
+	{
+		m_dma->adjust_wait(1);
+	}
+	return m_program.read_byte(offset);
 }
 
 u8 specnext_state::reg_r(offs_t nr_register)
@@ -2254,7 +2266,7 @@ void specnext_state::nr_1a_ula_clip_y2_w(u8 data)
 
 static const z80_daisy_config z80_daisy_chain[] =
 {
-	{ "ndma" },
+	{ "dma" },
 	{ "ctc" },
 	{ nullptr }
 };
@@ -2405,6 +2417,12 @@ void specnext_state::map_fetch(address_map &map)
 			approach gives better experience in debugger UI. */
 			do_m1(offset);
 			m_divmmc_delayed_check = 0;
+
+			// do_m1 performs read from m_program with waits, we need to take it back
+			if (!machine().side_effects_disabled() && (m_nr_07_cpu_speed == 0b11))
+			{
+				m_maincpu->adjust_icount(1);
+			}
 		}
 
 		return m_program.read_byte(offset);
@@ -2753,6 +2771,10 @@ void specnext_state::map_io(address_map &map)
 		if (m_nr_08_dac_en)
 			m_dac[3]->data_w(data);
 	}));
+
+	map(0x0000, 0xffff).view(m_io_shadow_view);
+	subdevice<zxbus_device>("zxbus")->set_io_space(m_io_shadow_view[0], m_io_shadow_view[1]);
+	m_io_shadow_view.select(0);
 }
 
 void specnext_state::map_regs(address_map &map)
@@ -3426,6 +3448,14 @@ void specnext_state::video_start()
 			to[offset & 0x1fff] = data;
 		}
 	});
+	prg.install_read_tap(0x0000, 0xffff, "mem_wait_r", [this](offs_t offset, u8 &data, u8 mem_mask)
+	{
+		// The 28MHz with core 3.0.5 is adding extra wait state to every instruction opcode fetch and memory read
+		if (!machine().side_effects_disabled() && (m_nr_07_cpu_speed == 0b11))
+		{
+			m_maincpu->adjust_icount(-1);
+		}
+	});
 }
 
 void specnext_state::tbblue(machine_config &config)
@@ -3453,7 +3483,7 @@ void specnext_state::tbblue(machine_config &config)
 	SPECNEXT_DMA(config, m_dma, 28_MHz_XTAL / 8);
 	m_dma->out_busreq_callback().set_inputline(m_maincpu, Z80_INPUT_LINE_BUSRQ);
 	m_dma->out_int_callback().set_inputline(m_maincpu, INPUT_LINE_IRQ0);
-	m_dma->in_mreq_callback().set([this](offs_t offset) { return m_program.read_byte(offset); });
+	m_dma->in_mreq_callback().set(FUNC(specnext_state::dma_mreq_r));
 	m_dma->out_mreq_callback().set([this](offs_t offset, u8 data) { m_program.write_byte(offset, data); });
 	m_dma->in_iorq_callback().set([this](offs_t offset) { return m_io.read_byte(offset); });
 	m_dma->out_iorq_callback().set([this](offs_t offset, u8 data) { m_io.write_byte(offset, data); });
@@ -3487,8 +3517,7 @@ void specnext_state::tbblue(machine_config &config)
 	SPECNEXT_DIVMMC(config, m_divmmc, 0);
 
 	zxbus_device &zxbus(ZXBUS(config, "zxbus", 0));
-	zxbus.set_iospace("maincpu", AS_IO);
-	ZXBUS_SLOT(config, "zxbus:1", 0, "zxbus", zxbus_cards, nullptr);
+	ZXBUS_SLOT(config, "zxbus:1", 0, zxbus, zxbus_cards, nullptr);
 
 	const rectangle scr_full = { SCR_320x256.left() - 16, SCR_320x256.right() + 16, SCR_320x256.top() - 8, SCR_320x256.bottom() + 8 };
 	m_screen->set_raw(28_MHz_XTAL / 2, CYCLES_HORIZ, CYCLES_VERT, scr_full);
