@@ -25,6 +25,20 @@ Hardware:
 Refs:
     https://web.archive.org/web/20030208004427/http://www.petersplus.com/sprinter/
 
+Emulation NOTES:
+Following manual configuration adjustments are recommended for better experience:
+- CDROM CDDA Sound is only connected to ata1:1
+- Input Settings > Keyboard Selection >
+        Microsoft Natural Keyboard [root:kbd:ms_naturl]: Enabled
+- Use '-rs232 microsoft_mouse'
+- Input Settings > Input Assignments (this system) > Microsoft 2-Button Serial Mouse (HLE) [root:rs232:microsoft_mouse]
+        Mouse X 3 Analog:                                Mouse X	(MOUSECODE_1_XAXIS)
+        Mouse X 3 Analog Inc:                            Mouse X -  (MOUSECODE_1_XAXIS_NEG_SWITCH)
+        Mouse X 3 Analog Dec:                            Mouse X +  (MOUSECODE_1_XAXIS_POS_SWITCH)
+        Mouse Y 3 Analog:                                Mouse Y    (MOUSECODE_1_YAXIS)
+        Mouse Y 3 Analog Inc:                            Mouse Y -  (MOUSECODE_1_YAXIS_NEG_SWITCH)
+        Mouse Y 3 Analog Dec:                            Mouse Y +  (MOUSECODE_1_YAXIS_POS_SWITCH)
+
 TODO:
 - ISA memory slots
 - fully untied from Spectrum parent
