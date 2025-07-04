@@ -1452,15 +1452,16 @@ void sprinter_state::machine_start()
 	save_item(NAME(m_z80_m1));
 	save_item(NAME(m_z80_addr));
 	save_item(NAME(m_z80_data));
+	save_item(NAME(m_z80_data_odd));
 	save_item(NAME(m_z80_wait));
 	save_item(NAME(m_wait_ticks_count));
 	save_item(NAME(m_joy1_ctrl));
 	save_item(NAME(m_joy2_ctrl));
 	save_item(NAME(m_conf));
 	save_item(NAME(m_conf_loading));
+	save_item(NAME(m_starting));
 	save_item(NAME(m_bitstream_count));
 	save_item(NAME(m_bitstream_hash));
-	save_item(NAME(m_starting));
 	save_item(NAME(m_dos));
 	save_item(NAME(m_cash_on));
 	save_item(NAME(m_cnf));
@@ -1479,7 +1480,8 @@ void sprinter_state::machine_start()
 	save_item(NAME(m_rgmod));
 	save_item(NAME(m_pg3));
 	save_item(NAME(m_isa_addr_ext));
-	//save_item(NAME(m_hold));
+	save_item(NAME(m_hold.first));
+	save_item(NAME(m_hold.second));
 	save_item(NAME(m_kbd_data_cnt));
 	save_item(NAME(m_in_out_cmd));
 	save_item(NAME(m_ata_selected));
@@ -1493,8 +1495,8 @@ void sprinter_state::machine_start()
 	save_item(NAME(m_xcnt));
 	save_item(NAME(m_xagr));
 	save_item(NAME(m_acc_dir));
-	//save_item(NAME(m_fn_acc));
-	//save_item(NAME(m_access_state));
+	save_item(NAME(m_fn_acc));
+	save_item(NAME(m_access_state));
 	save_item(NAME(m_cbl_xx));
 	save_item(NAME(m_cbl_data));
 	save_item(NAME(m_cbl_cnt));
@@ -2082,6 +2084,9 @@ ROM_START( sprinter )
 	ROMX_LOAD( "_sprin.bin",        0x000000, 0x40000, CRC(00000000) SHA1(0000000000000000000000000000000000000000), ROM_BIOS(7))
 ROM_END
 } // Anonymous namespace
+
+ALLOW_SAVE_TYPE(sprinter_state::accel_state);
+ALLOW_SAVE_TYPE(sprinter_state::access_state);
 
 
 /*    YEAR  NAME        PARENT   COMPAT MACHINE   INPUT      CLASS           INIT        COMPANY                 FULLNAME           FLAGS */
