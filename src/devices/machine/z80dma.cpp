@@ -129,7 +129,7 @@ enum
 /****************************************************************************
  * device type definition
  ****************************************************************************/
-DEFINE_DEVICE_TYPE(Z80DMA, z80dma_device, "z80dma", "Z80 DMA Controller")
+DEFINE_DEVICE_TYPE(Z80DMA, z80dma_device, "z80dma", "Zilog Z80 DMA Controller")
 
 /****************************************************************************
  * z80dma_device - constructor
@@ -891,7 +891,7 @@ void z80dma_device::bai_w(int state)
 }
 
 
-DEFINE_DEVICE_TYPE(UA858D, ua858d_device, "ua858d", "UA858D DMA Controller")
+DEFINE_DEVICE_TYPE(UA858D, ua858d_device, "ua858d", "Mikroelektronik UA858D DMA Controller")
 
 ua858d_device::ua858d_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
 	: z80dma_device(mconfig, UA858D, tag, owner, clock)
