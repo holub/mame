@@ -25,6 +25,20 @@ Hardware:
 Refs:
     https://web.archive.org/web/20030208004427/http://www.petersplus.com/sprinter/
 
+Emulation NOTES:
+Following manual configuration adjustments are recommended for better experience:
+- CDROM CDDA Sound is only connected to ata1:1
+- Input Settings > Keyboard Selection >
+        Microsoft Natural Keyboard [root:kbd:ms_naturl]: Enabled
+- Use '-rs232 microsoft_mouse'
+- Input Settings > Input Assignments (this system) > Microsoft 2-Button Serial Mouse (HLE) [root:rs232:microsoft_mouse]
+        Mouse X 3 Analog:                                Mouse X	(MOUSECODE_1_XAXIS)
+        Mouse X 3 Analog Inc:                            Mouse X -  (MOUSECODE_1_XAXIS_NEG_SWITCH)
+        Mouse X 3 Analog Dec:                            Mouse X +  (MOUSECODE_1_XAXIS_POS_SWITCH)
+        Mouse Y 3 Analog:                                Mouse Y    (MOUSECODE_1_YAXIS)
+        Mouse Y 3 Analog Inc:                            Mouse Y -  (MOUSECODE_1_YAXIS_NEG_SWITCH)
+        Mouse Y 3 Analog Dec:                            Mouse Y +  (MOUSECODE_1_YAXIS_POS_SWITCH)
+
 TODO:
 - ISA memory slots
 - fully untied from Spectrum parent
@@ -80,7 +94,7 @@ public:
 	sprinter_state(const machine_config &mconfig, device_type type, const char *tag)
 		: spectrum_128_state(mconfig, type, tag)
 		, m_maincpu(*this, "maincpu")
-		, m_isa(*this, "isa%u", 0U)
+		, m_isa(*this, "isa8%u", 0U)
 		, m_irqs(*this, "irqs")
 		, m_rtc(*this, "rtc")
 		, m_ata(*this, "ata%u", 1U)
@@ -105,6 +119,7 @@ public:
 	void sprinter(machine_config &config);
 
 	INPUT_CHANGED_MEMBER(turbo_changed);
+	INPUT_CHANGED_MEMBER(on_nmi);
 
 protected:
 	virtual void machine_start() override ATTR_COLD;
@@ -190,8 +205,8 @@ private:
 
 	u8 bootstrap_r(offs_t offset);
 	void bootstrap_w(offs_t offset, u8 data);
-	u8 ram_r(offs_t offset);
-	void ram_w(offs_t offset, u8 data);
+	template<u8 Bank> u8 ram_r(offs_t offset);
+	template<u8 Bank> void ram_w(offs_t offset, u8 data);
 	void vram_w(offs_t offset, u8 data);
 	void update_int(bool recalculate);
 	u8 isa_r(offs_t offset);
@@ -260,6 +275,7 @@ private:
 	bool m_turbo;
 	bool m_turbo_hard;
 	bool m_arom16;
+	bool m_nmi_ena;
 	u8 m_rom_rg;
 	u8 m_pn;
 	u8 m_sc;
@@ -317,7 +333,7 @@ void sprinter_state::update_memory()
 	else
 	{
 		const bool cash_on = 0;
-		const bool nmi_ena = 1;
+		const bool nmi_ena = m_nmi_ena;
 		const bool sc0 = BIT(m_sc, 0);
 		const bool sc_lc = !(sc0 && m_ram_sys) && !cash_on;
 		const u8 spr_ = BIT(m_sc, 1) ? 0 : ((m_dos << 1) | (BIT(m_pn, 4) || !m_dos));
@@ -934,7 +950,7 @@ void sprinter_state::accel_control_r(u8 data)
 
 TIMER_CALLBACK_MEMBER(sprinter_state::acc_tick)
 {
-	bool is_block_op = BIT(m_acc_dir, 2);
+	const bool is_block_op = BIT(m_acc_dir, 2);
 	if (m_access_state == ACCEL_GO)
 	{
 		m_acc_cnt = m_rgacc;
@@ -944,14 +960,7 @@ TIMER_CALLBACK_MEMBER(sprinter_state::acc_tick)
 	const bool is_read = param & 1;
 	if (is_block_op)
 	{
-		if (m_pages[BIT(m_z80_addr, 14, 2)] & BANK_RAM_MASK)
-		{
-			do_accel_block(is_read);
-		}
-		else
-		{
-			is_block_op = false;
-		}
+		do_accel_block(is_read);
 	}
 	if (BIT(m_acc_dir, 3))
 	{
@@ -967,7 +976,7 @@ TIMER_CALLBACK_MEMBER(sprinter_state::acc_tick)
 	{
 		m_acc_timer->reset();
 		m_access_state = ACCEL_OFF;
-		m_maincpu->set_input_line(INPUT_LINE_HALT, CLEAR_LINE);
+		m_maincpu->set_input_line(Z80_INPUT_LINE_WAIT, CLEAR_LINE);
 	}
 	else
 	{
@@ -995,7 +1004,7 @@ void sprinter_state::check_accel(bool is_read, offs_t offset, u8 &data)
 	{
 		if (!m_deferring)
 		{
-			m_maincpu->set_input_line(INPUT_LINE_HALT, ASSERT_LINE);
+			m_maincpu->set_input_line(Z80_INPUT_LINE_WAIT, ASSERT_LINE);
 			m_access_state = ACCEL_GO;
 			m_acc_timer->adjust(attotime::from_ticks(6, X_SP), is_read);
 			m_z80_addr = offset;
@@ -1030,9 +1039,7 @@ void sprinter_state::do_accel_block(bool is_read)
 	{
 		accel_mem_r(m_z80_addr);
 		if (ram_wr)
-		{
 			update_accel_buffer(m_acc_cnt, m_z80_data);
-		}
 	}
 	else
 	{
@@ -1079,7 +1086,7 @@ void sprinter_state::accel_mem_r(offs_t offset)
 
 void sprinter_state::accel_mem_w(offs_t offset, u8 data)
 {
-	if (~m_pages[BIT(offset, 14, 2)] & (BANK_FASTRAM_MASK | BANK_ISA_MASK | BANK_WRDISBL_MASK))
+	if (m_pages[BIT(offset, 14, 2)] & BANK_RAM_MASK)
 	{
 		m_program.write_byte(offset, data);
 	}
@@ -1139,25 +1146,27 @@ void sprinter_state::bootstrap_w(offs_t offset, u8 data)
 	}
 }
 
-u8 sprinter_state::ram_r(offs_t offset)
+template<u8 Bank> u8 sprinter_state::ram_r(offs_t offset)
 {
-	const u8 bank = BIT(offset, 14, 2);
-	return ((m_pages[bank] & 0xf0) == 0x50)
+	static_assert(Bank < 4, "unexpected bank number");
+	return ((m_pages[Bank] & 0xf0) == 0x50)
 		? m_ram->pointer()[(0x50 << 14) + m_port_y * 1024 + (offset & 0x3ff)]
-		: reinterpret_cast<u8 *>(m_bank_ram[bank]->base())[offset & 0x3fff];
+		: reinterpret_cast<u8 *>(m_bank_ram[Bank]->base())[offset & 0x3fff];
 }
 
-void sprinter_state::ram_w(offs_t offset, u8 data)
+template<u8 Bank> void sprinter_state::ram_w(offs_t offset, u8 data)
 {
+	static_assert(Bank < 4, "unexpected bank number");
+
 	if (m_skip_write)
 	{
 		m_skip_write = false;
 		return;
 	}
 
-	const u8 bank = BIT(offset, 14, 2);
-	const u8 page = m_pages[bank] & 0xff;
-	if ((bank == 3) && (m_sc == 0x10) && (m_pages[3] == (BANK_RAM_MASK | 0xa0)))
+	offset = (Bank << 14) | (offset & 0x3fff);
+	const u8 page = m_pages[Bank] & 0xff;
+	if ((Bank == 3) && (m_sc == 0x10) && (m_pages[3] == (BANK_RAM_MASK | 0xa0)))
 		machine().schedule_soft_reset();
 
 	if ((page & 0xf0) == 0x50)
@@ -1182,7 +1191,7 @@ void sprinter_state::ram_w(offs_t offset, u8 data)
 				vram_w(vxa, data);
 			}
 		}
-		reinterpret_cast<u8 *>(m_bank_ram[bank]->base())[offset & 0x3fff] = data;
+		reinterpret_cast<u8 *>(m_bank_ram[Bank]->base())[offset & 0x3fff] = data;
 	}
 }
 
@@ -1212,9 +1221,13 @@ u8 sprinter_state::isa_r(offs_t offset)
 {
 	const u8 ctrl = m_ram_pages[m_pg3];
 	if ((ctrl & 0xf9) == 0xd0)
+	{
+
 		return BIT(ctrl, 2) // D:2 0-mem, 1-io
 			? m_isa[BIT(ctrl, 1)]->io_r((m_isa_addr_ext << 14) | offset)
-			: m_isa[BIT(ctrl, 1)]->mem_r((m_isa_addr_ext << 14) | offset);
+			// as far as no connected memory yet, pull up and avoid log about unmapped mem
+			: 0xff; //m_isa[BIT(ctrl, 1)]->mem_r((m_isa_addr_ext << 14) | offset);
+	}
 
 	return 0xff;
 }
@@ -1227,7 +1240,8 @@ void sprinter_state::isa_w(offs_t offset, u8 data)
 		if (BIT(ctrl, 2))
 			m_isa[BIT(ctrl, 1)]->io_w((m_isa_addr_ext << 14) | offset, data);
 		else
-			m_isa[BIT(ctrl, 1)]->mem_w((m_isa_addr_ext << 14) | offset, data);
+			// as far as no connected memory yet, nop write and avoid log about unmapped mem
+			(void)0; //m_isa[BIT(ctrl, 1)]->mem_w((m_isa_addr_ext << 14) | offset, data);
 	}
 }
 
@@ -1359,13 +1373,17 @@ void sprinter_state::map_fetch(address_map &map)
 void sprinter_state::map_mem(address_map &map)
 {
 	map(0x00000, 0x3ffff).rw(FUNC(sprinter_state::bootstrap_r), FUNC(sprinter_state::bootstrap_w));  // bootstrap
-	map(0x10000, 0x1ffff).rw(FUNC(sprinter_state::ram_r), FUNC(sprinter_state::ram_w));
 
+	map(0x10000, 0x13fff).rw(FUNC(sprinter_state::ram_r<0>), FUNC(sprinter_state::ram_w<0>));
 	map(0x10000, 0x13fff).view(m_bank_view0);
 	m_bank_view0[0](0x10000, 0x13fff).nopw(); // RAM RO
 	m_bank_view0[1](0x10000, 0x13fff).nopw().bankr(m_bank_rom[0]);
 	m_bank_view0[2](0x10000, 0x13fff).bankrw(m_bank0_fastram);
 
+	map(0x14000, 0x17fff).rw(FUNC(sprinter_state::ram_r<1>), FUNC(sprinter_state::ram_w<1>));
+	map(0x18000, 0x1bfff).rw(FUNC(sprinter_state::ram_r<2>), FUNC(sprinter_state::ram_w<2>));
+
+	map(0x1c000, 0x1ffff).rw(FUNC(sprinter_state::ram_r<3>), FUNC(sprinter_state::ram_w<3>));
 	map(0x1c000, 0x1ffff).view(m_bank_view3);
 	m_bank_view3[0](0x1c000, 0x1ffff).rw(FUNC(sprinter_state::isa_r), FUNC(sprinter_state::isa_w)); // ISA
 }
@@ -1427,6 +1445,7 @@ void sprinter_state::machine_start()
 	save_item(NAME(m_turbo));
 	save_item(NAME(m_turbo_hard));
 	save_item(NAME(m_arom16));
+	save_item(NAME(m_nmi_ena));
 	save_item(NAME(m_rom_rg));
 	save_item(NAME(m_pn));
 	save_item(NAME(m_sc));
@@ -1468,6 +1487,13 @@ void sprinter_state::machine_start()
 
 	m_dcp_location = m_ram->pointer() + (0x40 << 14);
 
+	for (int addr = 0; addr < m_fastram.bytes(); ++addr)
+		m_fastram.target()[addr] = machine().rand();
+	for (int addr = 0; addr < m_vram.bytes(); ++addr)
+		m_vram.target()[addr] = machine().rand();
+	for (int addr = 0; addr < m_ram->size(); ++addr)
+		m_ram->pointer()[addr] = machine().rand();
+
 	const u8 port_default[0x40] = {
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Cx - SYS PORTS COPIES
 		0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, // Dx - RAM PAGES
@@ -1482,6 +1508,31 @@ void sprinter_state::machine_start()
 	m_hold     = {0, 0}; // cb
 	m_conf_loading = 1;
 	m_conf = 0;
+
+	int idx = Z84_MCR + 1;
+	m_maincpu->state_add_divider(-1);
+	m_maincpu->state_add(idx++, "PG0",          m_pages[0]);
+	m_maincpu->state_add(idx++, "PG1",          m_pages[1]);
+	m_maincpu->state_add(idx++, "PG2",          m_pages[2]);
+	m_maincpu->state_add(idx++, "PG3",          m_pages[3]);
+	m_maincpu->state_add(idx++, "7FFD",         m_pn);
+	m_maincpu->state_add(idx++, "1FFD",         m_sc);
+
+	m_maincpu->state_add_divider(-1);
+
+	m_maincpu->state_add(idx++, "DOS OFF",      m_dos);
+	m_maincpu->state_add(idx++, "CNF",          m_cnf);
+	m_maincpu->state_add(idx++, "PORT_Y",       m_port_y);
+	m_maincpu->state_add(idx++, "RGMOD",        m_rgmod);
+
+	m_maincpu->state_add_divider(-1);
+	m_maincpu->state_add(idx++, "ACC MODE",     m_acc_dir);
+	m_maincpu->state_add(idx++, "ACC Buffer",   m_rgacc);
+	m_maincpu->state_add(idx++, "Ext ACC",      m_alt_acc);
+	m_maincpu->state_add(idx++, "ACC Counter",  m_acc_cnt);
+
+	m_maincpu->state_add_divider(-1);
+	m_maincpu->state_add(idx++, "ISA_ADDR_EXT", m_isa_addr_ext);
 }
 
 void sprinter_state::machine_reset()
@@ -1499,6 +1550,7 @@ void sprinter_state::machine_reset()
 	m_ram_sys = 0;
 	m_sys_pg = 0;
 	m_arom16 = 0;
+	m_nmi_ena = 1; // off
 	m_cnf = 0x00;
 	m_pn = 0x00;
 	m_sc = 0x00;
@@ -1703,6 +1755,18 @@ INPUT_CHANGED_MEMBER(sprinter_state::turbo_changed)
 	update_cpu();
 }
 
+INPUT_CHANGED_MEMBER(sprinter_state::on_nmi)
+{
+	if ((m_io_nmi->read() & 0x01) && m_nmi_ena)
+	{
+		m_nmi_ena = false;
+		update_memory();
+		m_maincpu->pulse_input_line(INPUT_LINE_NMI, attotime::zero);
+		machine().debug_break();
+	}
+}
+
+
 INPUT_PORTS_START( sprinter )
 	/* PORT_NAME =  KEY Mode    CAPS Mode    SYMBOL Mode   EXT Mode   EXT+Shift Mode   BASIC Mode  */
 	PORT_START("IO_LINE0") /* 0xFEFE */
@@ -1871,6 +1935,9 @@ INPUT_PORTS_START( sprinter )
 	PORT_BIT(0x8000, IP_ACTIVE_HIGH, IPT_BUTTON6)        PORT_PLAYER(2) PORT_CODE(JOYCODE_BUTTON6) PORT_NAME("%p Z")
 
 
+	PORT_START("NMI")
+	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("NMI") PORT_CODE(KEYCODE_F11) PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(sprinter_state::on_nmi), 0)
+
 	PORT_START("TURBO")
 	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("TURBO") PORT_CODE(KEYCODE_F12) PORT_TOGGLE PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(sprinter_state::turbo_changed), 0)
 INPUT_PORTS_END
@@ -1905,13 +1972,11 @@ void sprinter_state::sprinter(machine_config &config)
 
 	ISA8(config, m_isa[0], X_SP / 5);
 	m_isa[0]->set_custom_spaces();
-	zxbus_device &zxbus(ZXBUS(config, "zxbus", 0));
-	zxbus.set_iospace(m_isa[0], isa8_device::AS_ISA_IO);
-	ZXBUS_SLOT(config, "zxbus2isa", 0, "zxbus", zxbus_cards, nullptr);
+	ISA8_SLOT(config, "isa0", 0, m_isa[0], pc_isa8_cards, "zxbus_adapter", false);
 
 	ISA8(config, m_isa[1], X_SP / 5);
 	m_isa[1]->set_custom_spaces();
-	ISA8_SLOT(config, "isa8", 0, m_isa[1], pc_isa8_cards, nullptr, false);
+	ISA8_SLOT(config, "isa1", 0, m_isa[1], pc_isa8_cards, nullptr, false);
 
 	m_screen->set_raw(X_SP / 3, SPRINT_WIDTH, SPRINT_HEIGHT, { 0, SPRINT_XVIS - 1, 0, SPRINT_YVIS - 1 });
 	m_screen->set_screen_update(FUNC(sprinter_state::screen_update));
@@ -1959,27 +2024,35 @@ void sprinter_state::sprinter(machine_config &config)
 
 ROM_START( sprinter )
 	ROM_REGION(0x040000, "maincpu", ROMREGION_ERASEFF)
-	ROM_DEFAULT_BIOS("v3.04.253")
+	ROM_DEFAULT_BIOS("v3.04")
 
-	ROM_SYSTEM_BIOS(0, "v2.13.251", "BIOS v2.13, SETUP v251") // 11.10.2002
-	ROMX_LOAD( "sp2k-2.13.251.rom", 0x000000, 0x40000, CRC(6495575f) SHA1(a9ca06b27e7c5b2b5b9ff8fc2d19ee24ed64c258), ROM_BIOS(0))
+	ROM_SYSTEM_BIOS(0, "v2.13", "Firmware v2.13, 23.01.2002") // dd.mm.yyyy
+	ROMX_LOAD( "sp2k-2.13.rom", 0x000000, 0x40000, CRC(6495575f) SHA1(a9ca06b27e7c5b2b5b9ff8fc2d19ee24ed64c258), ROM_BIOS(0))
 
-	ROM_SYSTEM_BIOS(1, "v2.17.252", "BIOS v2.17, SETUP v252") // 03.03.2002
-	ROMX_LOAD( "sp2k-2.17.252.rom", 0x000000, 0x40000, CRC(3c7f1025) SHA1(d5c3d10b3b67f9ef87d3ce8a52ae3c33b95b9171), ROM_BIOS(1))
+	ROM_SYSTEM_BIOS(1, "v2.17", "Firmware v2.17, 03.03.2002")
+	ROMX_LOAD( "sp2k-2.17.rom", 0x000000, 0x40000, CRC(3c7f1025) SHA1(d5c3d10b3b67f9ef87d3ce8a52ae3c33b95b9171), ROM_BIOS(1))
 
-	ROM_SYSTEM_BIOS(2, "v3.00.253", "BIOS v3.00, SETUP v253") // 04.10.2002
-	ROMX_LOAD( "sp2k-3.00.253.rom", 0x000000, 0x40000, CRC(193de3da) SHA1(428dcb1253a88e7b5aedcd68b5bf6d2487592e10), ROM_BIOS(2))
+	ROM_SYSTEM_BIOS(2, "v3.00", "Firmware v3.00, 07.04.2002")
+	ROMX_LOAD( "sp2k-3.00.rom", 0x000000, 0x40000, CRC(193de3da) SHA1(428dcb1253a88e7b5aedcd68b5bf6d2487592e10), ROM_BIOS(2))
 
-	ROM_SYSTEM_BIOS(3, "v3.03.253", "BIOS v3.03, SETUP v253") // 02.05.2003
-	ROMX_LOAD( "sp2k-3.03.253.rom", 0x000000, 0x40000, CRC(fe26f578) SHA1(ef6d0fe4ec1bae7bda572a4fb3b9497a8910b885), ROM_BIOS(3))
+	ROM_SYSTEM_BIOS(3, "v3.03", "Firmware v3.03, 13.05.2003")
+	ROMX_LOAD( "sp2k-3.03.rom", 0x000000, 0x40000, CRC(fe26f578) SHA1(ef6d0fe4ec1bae7bda572a4fb3b9497a8910b885), ROM_BIOS(3))
 
-	ROM_SYSTEM_BIOS(4, "v3.04.253", "BIOS v3.04, SETUP v253") // 06.16.2003
-	ROMX_LOAD( "sp2k-3.04.253.rom", 0x000000, 0x40000, CRC(1729cb5c) SHA1(fb4c9f80651aa87526f141839fb4d6cb86b654c7), ROM_BIOS(4))
+	ROM_SYSTEM_BIOS(4, "v3.04", "Firmware v3.04, 17.06.2003")
+	ROMX_LOAD( "sp2k-3.04.rom", 0x000000, 0x40000, CRC(1729cb5c) SHA1(fb4c9f80651aa87526f141839fb4d6cb86b654c7), ROM_BIOS(4))
+
+	ROM_SYSTEM_BIOS(5, "v3.05", "Firmware v3.05, 01.09.2022")
+	ROMX_LOAD( "sp2k-3.05.rom", 0x000000, 0x40000, CRC(fe1c2685) SHA1(10e4e29bdc058cd4380837fb8831ce4f5977f6b8), ROM_BIOS(5))
+
+	ROM_SYSTEM_BIOS(6, "v3.06", "Firmware v3.06, 25.06.2025")
+	ROMX_LOAD( "sp2k-3.06.rom", 0x000000, 0x40000, CRC(187f4382) SHA1(717ed28c59f9533a9b3f9d24098b536a0d3c1573), ROM_BIOS(6))
+
+	ROM_SYSTEM_BIOS(7, "dev",   "Firmware in development")
+	ROMX_LOAD( "_sprin.bin",        0x000000, 0x40000, CRC(00000000) SHA1(0000000000000000000000000000000000000000), ROM_BIOS(7))
 ROM_END
-
 } // Anonymous namespace
 
 
 /*    YEAR  NAME        PARENT   COMPAT MACHINE   INPUT      CLASS           INIT        COMPANY                 FULLNAME           FLAGS */
 // 1996 - Sp97 Prototype
-COMP( 2000, sprinter,   spec128, 0,     sprinter, sprinter,  sprinter_state, empty_init, "Peters Plus, Ivan Mak", "Sprinter Sp2000", 0)
+COMP( 2000, sprinter,   spec128, 0,     sprinter, sprinter,  sprinter_state, empty_init, "Peters Plus, Ivan Mak", "Sprinter Sp2000", MACHINE_SUPPORTS_SAVE)
