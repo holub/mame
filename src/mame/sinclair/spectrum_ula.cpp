@@ -27,6 +27,27 @@ void spectrum_ula_device::device_start()
 	save_item(NAME(m_bank3_page));
 }
 
+std::pair<u8, u8> spectrum_ula_device::addr_to_coords(u16 addr) const
+{
+	addr &= 0x3fff;
+	if (addr < 0x1800) // px
+		return {addr << 3, bitswap<8>(addr >> 5, 7, 6, 2, 1, 0, 5, 4, 3)};
+	else if (addr < 0x1b00) // attr
+		return {addr << 3, BIT(addr, 5, 6) << 3};
+	else // wrong
+		return {0xff, 0xff};
+}
+
+u16 spectrum_ula_device::coords_to_px_addr(u8 x, u8 y) const
+{
+	return (bitswap<8>(y, 7, 6, 2, 1, 0, 5, 4, 3) << 5) | (x >> 3);
+}
+
+u16 spectrum_ula_device::coords_to_at_addr(u8 x, u8 y) const
+{
+	return 0x1800 | (BIT(y, 3, 5) << 5) | (x >> 3);
+}
+
 
 spectrum_ula_contended_device::spectrum_ula_contended_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock)
 	: spectrum_ula_device(mconfig, type, tag, owner, clock)
@@ -182,8 +203,7 @@ spectrum_ula_48k_device::spectrum_ula_48k_device(const machine_config &mconfig, 
 	const u8 pattern[] = {6, 5, 4, 3, 2, 1, 0, 0};
 	memcpy(m_pattern, pattern, 8);
 	m_btime = 2;
-	m_atime_left = 4;
-	m_atime_right = 0;
+	m_atime = 4;
 	m_base_offset = -1;
 }
 
@@ -201,9 +221,8 @@ spectrum_ula_128k_device::spectrum_ula_128k_device(const machine_config &mconfig
 	const u8 pattern[] = {6, 5, 4, 3, 2, 1, 0, 0};
 	memcpy(m_pattern, pattern, 8);
 	m_btime = 3;
-	m_atime_left = 4;
-	m_atime_right = 0;
-	m_base_offset = -1; // leave it one for now, but according to Timings_Test it must be -3
+	m_atime = 6;
+	m_base_offset = -1; // TimingTest expects -3 here
 }
 
 bool spectrum_ula_128k_device::is_contended(offs_t offset)
@@ -221,8 +240,7 @@ spectrum_ula_plus2a_device::spectrum_ula_plus2a_device(const machine_config &mco
 	const u8 pattern[] = {1, 0, 7, 6, 5, 4, 3, 2};
 	memcpy(m_pattern, pattern, 8);
 	m_btime = 5;
-	m_atime_left = 4;
-	m_atime_right = 0;
+	m_atime = 4;
 	m_base_offset = 1;
 }
 
