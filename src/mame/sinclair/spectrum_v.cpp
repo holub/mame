@@ -17,7 +17,7 @@
 
 #include "emu.h"
 #include "spectrum.h"
-#include "spec128.h"
+#include <cassert>
 
 TIMER_CALLBACK_MEMBER(spectrum_state::finish_screen_update)
 {
@@ -166,7 +166,7 @@ void spectrum_state::spectrum_update_border(screen_device &screen, bitmap_ind16 
 ULA contention: |       |   6   |   5   |   4   |   3   |   2   |   1   |   0   |   0   |
  opcode read T: |   0   |   1   | 2 RSH | 3 RSH |       |       |       |       |       | ULA reads lower address for char1/attr1 from R6:0
  opcode read T: |       |       |   0   |   1   | 2 RSH | 3 RSH |       |       |       | ULA skip reading char2/attr2 and keep them from char1/attr1
-            px: |       | 0 | 1 | 2 | 3 |*4*| 5 | 6 | 7 |*0*| 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+            px: |       | 0 | 1 | 2 | 3 |*4*| 5 | 6 | 7 |*8*| 9 | A | B | C | D | E | F |
                 |       | << !right <<  | char1 | attr1 | char2 | attr2 |   >> right >> |
 
 TODO Curren implementation only tracks char switch position. In order to track both (char and attr) we need to share
@@ -179,36 +179,36 @@ void spectrum_state::spectrum_update_screen(screen_device &screen, bitmap_ind16 
 	{
 		u16 hpos = cliprect.left();
 		u16 x = hpos - get_screen_area().left();
-		bool chunk_right = x & 8;
-		if (x % 8 <= (chunk_right ? m_ula->get_atime_right() : m_ula->get_atime_left()))
-		{
-			u8 shift = x % 8;
-			x -= shift;
-			hpos -= shift;
-		}
-		else
-		{
-			u8 shift = 8 - (x % 8);
-			x += shift;
-			hpos += shift;
-			chunk_right = !chunk_right;
-		}
 		u16 y = vpos - get_screen_area().top();
-		u8 *scr = &m_screen_location[((y & 0xc0) << 5) | ((y & 7) << 8) | ((y & 0x38) << 2) | (x >> 3)];
-		u8 *attr = &m_screen_location[0x1800 | (((y & 0xf8) << 2) | (x >> 3))];
+
+		u8 *scr = &m_screen_location[m_ula->coords_to_px_addr(x, y)];
+		u8 *attr = &m_screen_location[m_ula->coords_to_at_addr(x, y)];
 		u16 *pix = &(bitmap.pix(vpos, hpos));
 
-		while ((hpos + (chunk_right ? m_ula->get_atime_right() : m_ula->get_atime_left())) <= cliprect.right())
+		while (hpos <= cliprect.right())
 		{
-			u16 ink = ((*attr >> 3) & 0x08) | (*attr & 0x07);
-			u16 pap = (*attr >> 3) & 0x0f;
-			u8 pix8 = (invert_attrs && (*attr & 0x80)) ? ~*scr : *scr;
+			//bool with_ula = (y == m_ula->get_ula_y()) && ((x & 0xf0) == (m_ula->get_ula_x() & 0xf0));
+			u8 a, p;
+			if (m_ula->is_active() && (m_ula->get_ula_y() == y) && (m_ula->get_ula_x() == (x & ~7)))
+			{
+				a = m_ula->get_ula_at();
+				p = m_ula->get_ula_px();
+				m_ula->ula_off();
+			}
+			else
+			{
+				a = *attr;
+				p = *scr;
+			}
 
-			for (u8 b = 0x80; b; b >>= 1, x++, hpos++)
+			u16 ink = ((a >> 3) & 0x08) | (a & 0x07);
+			u16 pap = (a >> 3) & 0x0f;
+			u8 pix8 = (invert_attrs && (a & 0x80)) ? ~p : p;
+
+			for (u8 b = (0x80 >> (x & 7)); b && (hpos <= cliprect.right()); b >>= 1, x++, hpos++)
 				*pix++ = (pix8 & b) ? ink : pap;
 			scr++;
 			attr++;
-			chunk_right = !chunk_right;
 		}
 	}
 }
@@ -224,55 +224,45 @@ void spectrum_state::spectrum_refresh_w(offs_t offset, uint8_t data)
 		return;
 
 	const rectangle screen = get_screen_area();
-	u8 x = m_screen->hpos() - screen.left();
-	const u16 y = m_screen->vpos() - screen.top();
+	const u8 x = m_screen->hpos() - screen.left();
 
 	// icount is not adjusted yet, everything below is happening during
 	// the last REFRESH cycle: +2px(1t of 3.5MHz)
 	u8 snow_pattern = 0;
-	u8 t_to_chunk_end = 0;
 	if (x % 16 == 0x00)
-	{
+	//if (x % 16 == 0x08)
 		snow_pattern = 1;
-		t_to_chunk_end = 4;
-	}
 	else if (x % 16 == 0x04)
-	{
+	//else if (x % 16 == 0x00)
 		snow_pattern = 2;
-		x += 8;
-		t_to_chunk_end = 6;
-	}
 	else
-	{
 		return;
-	}
 
+	const u16 y = m_screen->vpos() - screen.top();
 	const u16 px_addr_hi = ((y & 0xc0) << 5) | ((y & 7) << 8) | ((y & 0x20) << 2);
 	const u16 attr_addr_hi = 0x1800 | ((y & 0xe0) << 2);
-	const u8 addr_lo = ((y & 0x18) << 2) | (x >> 3);
 
-	const u8 px_tmp = m_screen_location[px_addr_hi | addr_lo];
-	const u8 attr_tmp = m_screen_location[attr_addr_hi | addr_lo];
-
+	m_screen->update_now();
 	if (snow_pattern == 1)
 	{
 		const u8 i = offset >> 8;
 		const u8 r = (offset + 1) & 0x7f; // R must be already incremented during refresh. Consider z80 update.
 		const u8 *const base = snow_pattern1_base(i);
-		m_screen_location[px_addr_hi | addr_lo] = base[px_addr_hi | r];
-		m_screen_location[attr_addr_hi | addr_lo] = base[attr_addr_hi | r];
+
+		m_ula->ula_on();
+		m_ula->set_ula_px(base[px_addr_hi | r]);
+		m_ula->set_ula_at(base[attr_addr_hi | r]);
 	}
 	else if (snow_pattern == 2)
 	{
-		m_screen_location[px_addr_hi | addr_lo] = m_screen_location[(px_addr_hi | addr_lo) - 1];
-		m_screen_location[attr_addr_hi | addr_lo] = m_screen_location[(attr_addr_hi | addr_lo) - 1];
-	}
+		const u8 addr_lo = (((y & 0x18) << 2) | (x >> 3));
 
-	m_maincpu->adjust_icount(-t_to_chunk_end);
-	m_screen->update_now();
-	m_maincpu->adjust_icount(t_to_chunk_end);
-	m_screen_location[px_addr_hi | addr_lo] = px_tmp;
-	m_screen_location[attr_addr_hi | addr_lo] = attr_tmp;
+		m_maincpu->adjust_icount(-4);
+		m_ula->ula_on();
+		m_ula->set_ula_px(m_screen_location[px_addr_hi | addr_lo]);
+		m_ula->set_ula_at(m_screen_location[attr_addr_hi | addr_lo]);
+		m_maincpu->adjust_icount(4);
+	}
 }
 
 u8 *spectrum_state::snow_pattern1_base(u8 i_reg)

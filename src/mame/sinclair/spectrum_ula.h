@@ -19,6 +19,12 @@ public:
 
 	virtual void nomem_rq(offs_t offset, u8 data) {}
 	virtual void m1(offs_t offset) {}
+	virtual void ula_on() { m_ula_active = true; m_ula_x = (m_screen->hpos() - m_screen_area.left()) & ~7; m_ula_y = m_screen->vpos() - m_screen_area.top(); }
+	virtual void ula_off() { 
+		assert(m_ula_active);
+		m_ula_active = false;
+	}
+	bool is_active() { return m_ula_active; }
 	virtual void io_r(offs_t offset) {}
 	virtual void io_w(offs_t offset) {}
 	virtual void data_r(offs_t offset) {}
@@ -37,9 +43,18 @@ public:
 	virtual u8 get_irq_ext_length() { return 0; }
 	virtual u8 get_border_chunk_size() { return 1; }
 	virtual u8 get_btime() { return 0; }
-	virtual u8 get_atime_left() { return 0; }
-	virtual u8 get_atime_right() { return 0; }
+	virtual u8 get_atime() { return 0xff; }
 	virtual s8 get_raster_contention_offset() { return 0; }
+	int get_ula_x() { return m_ula_x; }
+	int get_ula_y() { return m_ula_y; }
+	void set_ula_px(u8 px) { m_ula_px = px; }
+	u8 get_ula_px() { return m_ula_px; }
+	void set_ula_at(u8 at) { m_ula_at = at; }
+	u8 get_ula_at() { return m_ula_at; }
+
+	std::pair<u8, u8> addr_to_coords(u16 addr) const;
+	u16 coords_to_px_addr(u8 x, u8 y) const;
+	u16 coords_to_at_addr(u8 x, u8 y) const;
 
 protected:
 	spectrum_ula_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock);
@@ -52,6 +67,12 @@ protected:
 
 	rectangle m_screen_area;
 	u8 m_bank3_page;
+
+	bool m_ula_active;
+	int m_ula_x;
+	int m_ula_y;
+	u8 m_ula_px;
+	u8 m_ula_at;
 };
 
 
@@ -79,8 +100,7 @@ public:
 	virtual u8 get_irq_ext_length() override { return m_is_timings_late; };
 	virtual u8 get_border_chunk_size() override { return 8; }
 	virtual u8 get_btime() override { return m_btime; }
-	virtual u8 get_atime_left() override { return m_atime_left; }
-	virtual u8 get_atime_right() override { return m_atime_right; }
+	virtual u8 get_atime() override { return m_atime; }
 	virtual s8 get_raster_contention_offset() override { return m_base_offset + m_is_timings_late; }
 
 protected:
@@ -92,9 +112,9 @@ protected:
 	virtual bool is_contended(offs_t offset) = 0;
 
 	u8 m_pattern[8];
-	u8 m_btime; // Pixel offset in 16px chunk (8T) when current [b]order attribute is applied.
-	u8 m_atime_left; // Pixel offset when [a]ttribute is applied on the left side.
-	u8 m_atime_right; // Pixel offset when [a]ttribute is applied on the right side.
+	u8 m_btime; // Pixel offset in 16px chunk (8T) when current [b]order attribute is read by ULA.
+	u8 m_atime; // Pixel offset when [a]ttribute is read.
+	u8 m_ptime; // Pixel offset when [p]pixels are read.
 	s8 m_base_offset; // Defines offset in CPU cycles from screen left side. Early model (48/128/+2) typically use -1, later (+2A/+3) +1
 
 	u64 m_video_line_clocks;
