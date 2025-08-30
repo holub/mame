@@ -201,7 +201,53 @@ template <u8 Bank> void spectrum_128_state::spectrum_128_ram_w(offs_t offset, u8
 {
 	u16 addr = 0x4000 * Bank + offset;
 	m_ula->data_w(addr);
-	if (is_vram_write(addr)) m_screen->update_now();
+	if (is_vram_write(addr))
+	{
+		rectangle screen = get_screen_area();
+		u16 hpos = m_screen->hpos();
+		u16 vpos = m_screen->vpos();
+		if (screen.contains(hpos, vpos)) // beam in the screen area
+		{
+			hpos -= screen.left();
+			vpos -= screen.top();
+			if (offset < 0x1800)
+			{
+				const u8 y = ((offset >> 5) & 0xc0) | ((offset >> 8) & 7) | ((offset >> 2) & 0x38);
+				if (y == vpos)
+				{
+					const u8 x = (offset << 3) & 0xf8;
+					if (x == (hpos & 0xf8))
+					{
+						if ((hpos & 0x0f) >= 0x08)
+						{
+							m_ula->ula_on();
+							m_ula->set_ula_px(((u8*)m_bank_ram[Bank]->base())[offset]);
+							//m_ula->set_ula_px(3);
+						}
+					}
+				}
+			}
+			else // attr
+			{
+				const u8 y = (offset >> 2) & 0xf8;
+				if (y == (vpos & 0xf8))
+				{
+					const u8 x = (offset << 3) & 0xf8;
+					if (x == (hpos & 0xf8))
+					{
+						if ((hpos & 0x0f) >= 0x08)
+						{
+							m_ula->ula_on();
+							//m_ula->set_ula_at(3);
+							m_ula->set_ula_at(((u8*)m_bank_ram[Bank]->base())[offset]);
+						}
+					}
+				}
+			}
+		}
+
+		m_screen->update_now();
+	}
 
 	((u8*)m_bank_ram[Bank]->base())[offset] = data;
 }
