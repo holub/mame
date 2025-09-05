@@ -102,7 +102,7 @@ public:
 		, m_view7(*this, "mem_view7")
 		, m_copper(*this, "copper")
 		, m_ctc(*this, "ctc")
-		, m_dma(*this, "ndma")
+		, m_dma(*this, "dma")
 		, m_i2c(*this, "i2c")
 		, m_sdcard(*this, "sdcard")
 		, m_ay(*this, "ay%u", 0U)
@@ -2392,7 +2392,7 @@ void specnext_state::nr_1a_ula_clip_y2_w(u8 data)
 
 static const z80_daisy_config z80_daisy_chain[] =
 {
-	{ "ndma" },
+	{ "dma" },
 	{ "ctc" },
 	{ nullptr }
 };
