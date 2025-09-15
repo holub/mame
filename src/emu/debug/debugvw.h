@@ -124,6 +124,9 @@ public:
 	const char *name() const { return m_name.c_str(); }
 	device_t *device() const { return m_device; }
 
+	const std::string name_path() const { return m_name.substr(0, m_name.find_last_of('/') + 1); }
+	const std::string name_short() const { return m_name.substr(m_name.find_last_of('/') + 1); }
+
 private:
 	// internal state
 	std::string const       m_name;                 // name of the source item

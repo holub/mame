@@ -190,6 +190,7 @@ void debug_view_memory::enumerate_sources()
 	// finally add all global array symbols in ASCII order
 	std::string name;
 	std::size_t const firstsave = m_source_list.size();
+	std::set<std::basic_string<char>> path_seen;
 	for (int itemnum = 0; itemnum < machine().save().registration_count(); itemnum++)
 	{
 		u32 valsize, valcount, blockcount, stride;
@@ -199,7 +200,15 @@ void debug_view_memory::enumerate_sources()
 		// add pretty much anything that's not a timer (we may wish to cull other items later)
 		// also, don't trim the front of the name, it's important to know which VIA6522 we're looking at, e.g.
 		if (strncmp(name.c_str(), "timer/", 6))
-			m_source_list.emplace_back(std::make_unique<debug_view_memory_source>(std::move(name), base, valsize, valcount, blockcount, stride));
+		{
+			auto dvms = std::make_unique<debug_view_memory_source>(std::move(name), base, valsize, valcount, blockcount, stride);
+			std::string path = dvms->name_path();
+			if (auto search = path_seen.find(path); search == path_seen.end()) {
+				path_seen.insert(path);
+				m_source_list.emplace_back(std::make_unique<debug_view_memory_source>(std::move(path), base, valsize, valcount, blockcount, stride));
+			}
+			m_source_list.emplace_back(std::move(dvms));
+		}
 	}
 	std::sort(
 			std::next(m_source_list.begin(), firstsave),

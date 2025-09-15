@@ -459,7 +459,7 @@ void MemoryWindow::populateComboBox()
 
 	m_memoryComboBox->clear();
 	for (auto &source : m_memTable->view()->source_list())
-		m_memoryComboBox->addItem(source->name());
+		m_memoryComboBox->addItem(source->name_short().empty() ? source->name() : source->name_short().c_str());
 }
 
 
