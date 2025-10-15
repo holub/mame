@@ -48,6 +48,7 @@ class z80ctc_channel_device : public device_t
 public:
 	// construction/destruction
 	z80ctc_channel_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
+	u16             m_mode;                 // current mode
 
 protected:
 	// device_t implementation
@@ -64,7 +65,7 @@ protected:
 
 	required_device<z80ctc_device> m_device; // pointer back to our device
 	int             m_index;                // our channel index
-	u16             m_mode;                 // current mode
+	//u16             m_mode;                 // current mode
 	u16             m_tconst;               // time constant
 	u16             m_down;                 // down counter (clock mode only)
 	bool            m_extclk;               // current signal from the external clock

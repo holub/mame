@@ -13,6 +13,8 @@ class specnext_ctc_device : public z80ctc_device
 public:
 	specnext_ctc_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
 
+	void ctrl_int_w(offs_t ch, uint8_t data);
+
 protected:
 	virtual int z80daisy_irq_ack() override;
 

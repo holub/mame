@@ -24,3 +24,11 @@ int specnext_ctc_device::z80daisy_irq_ack()
 		? (m_vector + ((channel + 3) << 1))
 		: m_vector;
 }
+
+void specnext_ctc_device::ctrl_int_w(offs_t ch, u8 data)
+{
+	if (data & 1)
+		m_channel[ch]->m_mode |= 0x80;
+	else
+		m_channel[ch]->m_mode &= 0x7f;
+}

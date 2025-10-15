@@ -279,9 +279,10 @@ void z80ctc_device::interrupt_check()
 
 z80ctc_channel_device::z80ctc_channel_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, Z80CTC_CHANNEL, tag, owner, clock),
+		m_mode(0),
 		m_device(*this, DEVICE_SELF_OWNER),
 		m_index(0),
-		m_mode(0),
+		//m_mode(0),
 		m_tconst(0),
 		m_down(0),
 		m_extclk(0),

@@ -2325,7 +2325,7 @@ void specnext_state::reg_w(offs_t nr_wr_reg, u8 nr_wr_dat)
 		{
 			u8 active = BIT(nr_wr_dat, 0, 4);
 			for (auto ch = 0; ch < 4; ++ch, active >>= 1)
-				m_ctc->write(ch, 1 | ((active & 1) ? 0 : 2)); // for inactive: CONTROL + RESET
+				m_ctc->ctrl_int_w(ch, active & 1);
 		}
 		break;
 	case 0xc6:
