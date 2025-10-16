@@ -36,6 +36,7 @@
 #include "bus/spectrum/zxbus/bus.h"
 #include "cpu/z80/z80n.h"
 #include "machine/ds1307.h"
+#include "machine/input_merger.h"
 #include "machine/spi_sdcard.h"
 #include "sound/ay8910.h"
 #include "sound/dac.h"
@@ -100,6 +101,7 @@ public:
 		, m_view5(*this, "mem_view5")
 		, m_view6(*this, "mem_view6")
 		, m_view7(*this, "mem_view7")
+		, m_irqs(*this, "irqs")
 		, m_im2(*this, "im2")
 		, m_copper(*this, "copper")
 		, m_ctc(*this, "ctc")
@@ -319,6 +321,7 @@ private:
 	memory_bank_creator m_bank_boot_rom;
 	memory_bank_array_creator<8> m_bank_ram;
 	memory_view m_view0, m_view1, m_view2, m_view3, m_view4, m_view5, m_view6, m_view7;
+	required_device<input_merger_device> m_irqs;
 	required_device<specnext_im2_device> m_im2;
 	required_device<specnext_copper_device> m_copper;
 	required_device<specnext_ctc_device> m_ctc;
@@ -2444,7 +2447,7 @@ TIMER_CALLBACK_MEMBER(specnext_state::line_irq_on)
 
 void specnext_state::ctc_irq_on(int state)
 {
-	m_maincpu->set_input_line(INPUT_LINE_IRQ0, state);
+	m_irqs->in_w<1>(state);
 }
 
 INTERRUPT_GEN_MEMBER(specnext_state::specnext_interrupt)
@@ -3620,8 +3623,10 @@ void specnext_state::tbblue(machine_config &config)
 	m_maincpu->out_retn_seen_cb().set(FUNC(specnext_state::leave_nmi));
 	m_maincpu->busack_cb().set(m_dma, FUNC(specnext_dma_device::bai_w));
 
+	INPUT_MERGER_ANY_HIGH(config, m_irqs).output_handler().set_inputline(m_maincpu, INPUT_LINE_IRQ0);
+
 	SPECNEXT_IM2(config, m_im2, 28_MHz_XTAL / 8);
-	m_im2->intr_callback().set_inputline(m_maincpu, INPUT_LINE_IRQ0);
+	m_im2->intr_callback().set(m_irqs, FUNC(input_merger_any_high_device::in_w<0>));
 
 	SPECNEXT_CTC(config, m_ctc, 28_MHz_XTAL / 8);
 	m_ctc->zc_callback<0>().set(m_ctc, FUNC(z80ctc_device::trg1));
