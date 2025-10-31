@@ -148,8 +148,7 @@ protected:
 	void update_video_mode();
 
 	u8 do_m1(offs_t offset);
-	void do_mf_nmi();
-	void leave_nmi(int state);
+	void on_retn_seen(int state);
 	void map_fetch(address_map &map) ATTR_COLD;
 	void map_mem(address_map &map) ATTR_COLD;
 	void map_io(address_map &map) ATTR_COLD;
@@ -2333,9 +2332,11 @@ void specnext_state::reg_w(offs_t nr_wr_reg, u8 nr_wr_dat)
 		break;
 	case 0xc2:
 		m_nr_c2_retn_address_lsb = nr_wr_dat;
+		LOGINT("[Stackless RETN] LSB=%02x\n", m_nr_c2_retn_address_lsb);
 		break;
 	case 0xc3:
 		m_nr_c3_retn_address_msb = nr_wr_dat;
+		LOGINT("[Stackless RETN] MSB=%02x\n", m_nr_c3_retn_address_msb);
 		break;
 	case 0xc4:
 		m_nr_c4_int_en_0_expbus = BIT(nr_wr_dat, 7);
@@ -2397,19 +2398,29 @@ void specnext_state::nr_02_w(u8 nr_wr_dat)
 		m_nr_da_iotrap_cause = 0;
 
 	m_nr_02_generate_mf_nmi = BIT(nr_wr_dat, 3);
-	do_mf_nmi();
-
-	if (BIT(nr_wr_dat, 2))
+	m_nr_02_generate_divmmc_nmi = BIT(nr_wr_dat, 2);
+	if (!m_nr_02_generate_mf_nmi && !m_nr_02_generate_divmmc_nmi)
 	{
-		if (m_nr_06_button_drive_nmi_en)
-		{
-			m_nr_02_generate_divmmc_nmi = 1;
-			m_maincpu->nmi();
-		}
+		LOGINT("[Reset] NMI Off\n");
+		m_maincpu->set_input_line(INPUT_LINE_NMI, CLEAR_LINE);
+		m_dma->wait_w(0);
 	}
 	else
 	{
-		m_nr_02_generate_divmmc_nmi = 0;
+		m_maincpu->nmi();
+		//m_dma->wait_w(m_nr_cc_dma_int_en_0_7);
+
+		if (m_nr_02_generate_mf_nmi)
+		{
+			LOGINT("[Reset] NMI On (MF)\n");
+			m_mf->button_w(1);
+			m_mf->clock_w();
+			m_mf->button_w(0);
+		}
+		else// if (m_nr_02_generate_divmmc_nmi)
+		{
+			LOGINT("[Reset] NMI On (DivMMC)\n");
+		}
 	}
 
 	if (BIT(nr_wr_dat, 1)) // hard reset
@@ -2520,36 +2531,37 @@ void specnext_state::line_irq_adjust()
 
 INPUT_CHANGED_MEMBER(specnext_state::on_mf_nmi)
 {
-	m_nr_02_generate_mf_nmi = newval & 1;
-	do_mf_nmi();
-	m_nr_02_generate_mf_nmi = 0;
+	if (m_nr_06_button_m1_nmi_en)
+	{
+		const int state = newval & 1;
+		m_maincpu->set_input_line(INPUT_LINE_NMI, state ? ASSERT_LINE : CLEAR_LINE);
+		m_mf->button_w(state);
+		m_mf->clock_w();
+	}
 }
 
 INPUT_CHANGED_MEMBER(specnext_state::on_divmmc_nmi)
 {
 	m_nr_02_generate_divmmc_nmi = newval & 1;
 	if (m_nr_06_button_drive_nmi_en && m_nr_02_generate_divmmc_nmi)
-		m_maincpu->nmi();
+		m_maincpu->set_input_line(INPUT_LINE_NMI, ASSERT_LINE);
 }
 
-void specnext_state::do_mf_nmi()
+void specnext_state::on_retn_seen(int state)
 {
-	if (m_nr_06_button_m1_nmi_en && m_nr_02_generate_mf_nmi)
-	{
-		m_maincpu->nmi();
-		m_mf->button_w(1);
-		m_mf->clock_w();
-		m_mf->button_w(0);
-	}
-}
+	LOGINT("RETN\n");
+	m_maincpu->set_input_line(INPUT_LINE_NMI, CLEAR_LINE);
+	m_dma->wait_w(0);
 
-void specnext_state::leave_nmi(int state)
-{
 	m_mf->cpu_retn_seen_w(1);
 	m_mf->clock_w();
 
 	m_mf->cpu_retn_seen_w(0);
 	m_mf->clock_w();
+
+	m_divmmc->retn_seen_w(1);
+	m_divmmc->clock_w();
+
 	bank_update(0, 2);
 }
 
@@ -2896,6 +2908,9 @@ void specnext_state::map_io(address_map &map)
 	map(0x0bdf, 0x0bdf).mirror(0xf000).lr8(NAME([this]() -> u8 { return m_io_mouse[0]->read(); }));                 // #fbdf
 	map(0x0fdf, 0x0fdf).mirror(0xf000).lr8(NAME([this]() -> u8 { return ~m_io_mouse[1]->read(); }));                // #ffdf
 	map(0x0adf, 0x0adf).mirror(0xf000).lr8(NAME([this]() -> u8 { return 0x80 | (m_io_mouse[2]->read() & 0x07); })); // #fadf
+
+	// TODO Kempston joy 2 / MD Pad 2
+	map(0x0037, 0x0037).mirror(0xff00).lr8(NAME([this]() -> u8 { return port_37_io_en() ? 0xff : 0xff; }));
 
 	// TODO resolve conflicts mf+joy+DAC: 1f, 3f
 	//map(0x001f, 0x001f).mirror(0xff00).lr8(NAME([]() -> u8 { return 0x00; /* Joy1,2*/ })).lw8(NAME([this](u8 data) {
@@ -3678,7 +3693,7 @@ void specnext_state::tbblue(machine_config &config)
 	m_maincpu->set_irq_acknowledge_callback(NAME([](device_t &, int){ return 0xff; }));
 	m_maincpu->out_nextreg_cb().set(FUNC(specnext_state::reg_w));
 	m_maincpu->in_nextreg_cb().set(FUNC(specnext_state::reg_r));
-	m_maincpu->out_retn_seen_cb().set(FUNC(specnext_state::leave_nmi));
+	m_maincpu->out_retn_seen_cb().set(FUNC(specnext_state::on_retn_seen));
 	m_maincpu->busack_cb().set(m_dma, FUNC(specnext_dma_device::bai_w));
 
 	SPECNEXT_IM2(config, m_im2_line, 28_MHz_XTAL / 8);
