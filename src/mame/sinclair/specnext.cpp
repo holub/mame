@@ -46,7 +46,7 @@
 #define LOG_COPPER (1U << 3)
 #define LOG_INT    (1U << 4)
 
-//#define VERBOSE ( LOG_GENERAL /*| LOG_IO | LOG_MEM | LOG_COPPER*/ | LOG_INT )
+#define VERBOSE ( LOG_GENERAL /*| LOG_IO | LOG_MEM | LOG_COPPER*/ | LOG_INT )
 #include "logmacro.h"
 
 #define LOGIO(...)     LOGMASKED(LOG_IO,     __VA_ARGS__)
@@ -203,6 +203,7 @@ private:
 	bool machine_type_48() const { return m_nr_03_machine_type == 0 || m_nr_03_machine_type == 1; }
 	bool machine_type_128() const { return m_nr_03_machine_type == 2 || m_nr_03_machine_type == 4; }
 	bool machine_type_p3() const { return !machine_type_48() && !machine_type_128(); }
+	bool mf_is_active() const { return m_mf->mf_enabled_r() || m_mf->nmi_disable_r(); }
 
 	void nr_02_w(u8 nr_wr_dat);
 	bool nr_02_iotrap() { return m_nr_da_iotrap_cause & 3; }
@@ -2399,29 +2400,39 @@ void specnext_state::nr_02_w(u8 nr_wr_dat)
 
 	m_nr_02_generate_mf_nmi = BIT(nr_wr_dat, 3);
 	m_nr_02_generate_divmmc_nmi = BIT(nr_wr_dat, 2);
-	if (!m_nr_02_generate_mf_nmi && !m_nr_02_generate_divmmc_nmi)
-	{
-		LOGINT("[Reset] NMI Off\n");
-		m_maincpu->set_input_line(INPUT_LINE_NMI, CLEAR_LINE);
-		m_dma->wait_w(0);
-	}
-	else
+	LOGINT("[Reset] NMI: MF=%d, DivMMC=%d\n", m_nr_02_generate_mf_nmi, m_nr_02_generate_divmmc_nmi);
+
+
+	if (m_nr_02_generate_mf_nmi)
 	{
 		m_maincpu->nmi();
 		//m_dma->wait_w(m_nr_cc_dma_int_en_0_7);
 
-		if (m_nr_02_generate_mf_nmi)
-		{
-			LOGINT("[Reset] NMI On (MF)\n");
-			m_mf->button_w(1);
-			m_mf->clock_w();
-			m_mf->button_w(0);
-		}
-		else// if (m_nr_02_generate_divmmc_nmi)
-		{
-			LOGINT("[Reset] NMI On (DivMMC)\n");
-		}
+		m_mf->button_w(1);
+		m_mf->clock_w();
+		m_mf->button_w(0);
+
 	}
+
+	else if (m_nr_02_generate_divmmc_nmi)
+	{
+		m_maincpu->nmi();
+		//m_dma->wait_w(m_nr_cc_dma_int_en_0_7);
+	}
+	else
+	{
+		//m_divmmc->automap_reset_w(1);
+		//m_divmmc->clock_w();
+		//m_divmmc->automap_reset_w(0);
+		//m_divmmc->clock_w();
+	}
+
+	if (!m_nr_02_generate_mf_nmi && !m_nr_02_generate_divmmc_nmi)
+	{
+		//m_maincpu->set_input_line(INPUT_LINE_NMI, CLEAR_LINE);
+		m_dma->wait_w(0);
+	}
+
 
 	if (BIT(nr_wr_dat, 1)) // hard reset
 	{
@@ -2534,7 +2545,9 @@ INPUT_CHANGED_MEMBER(specnext_state::on_mf_nmi)
 	if (m_nr_06_button_m1_nmi_en)
 	{
 		const int state = newval & 1;
-		m_maincpu->set_input_line(INPUT_LINE_NMI, state ? ASSERT_LINE : CLEAR_LINE);
+		if (state)
+			m_maincpu->set_input_line(INPUT_LINE_NMI, ASSERT_LINE);
+
 		m_mf->button_w(state);
 		m_mf->clock_w();
 	}
@@ -2550,25 +2563,31 @@ INPUT_CHANGED_MEMBER(specnext_state::on_divmmc_nmi)
 void specnext_state::on_retn_seen(int state)
 {
 	LOGINT("RETN\n");
-	m_maincpu->set_input_line(INPUT_LINE_NMI, CLEAR_LINE);
+	//m_maincpu->set_input_line(INPUT_LINE_NMI, CLEAR_LINE);
 	m_dma->wait_w(0);
 
-	m_mf->cpu_retn_seen_w(1);
-	m_mf->clock_w();
-
-	m_mf->cpu_retn_seen_w(0);
-	m_mf->clock_w();
-
-	m_divmmc->retn_seen_w(1);
-	m_divmmc->clock_w();
-
-	bank_update(0, 2);
+	if (mf_is_active())
+	{
+		m_mf->cpu_retn_seen_w(1);
+		m_mf->clock_w();
+		m_mf->cpu_retn_seen_w(0);
+		m_mf->clock_w();
+	}
+	else
+	{
+		m_divmmc->retn_seen_w(1);
+		m_divmmc->clock_w();
+		//m_divmmc->retn_seen_w(0);
+		//m_divmmc->clock_w();
+		bank_update(0, 2);
+	}
 }
 
 u8 specnext_state::do_m1(offs_t offset)
 {
 	u8 bank = offset >> 13;
 	// pre M1
+	m_divmmc->retn_seen_w(0);
 	m_divmmc->cpu_mreq_n_w(1);
 	m_divmmc->clock_w();
 
@@ -2910,7 +2929,7 @@ void specnext_state::map_io(address_map &map)
 	map(0x0adf, 0x0adf).mirror(0xf000).lr8(NAME([this]() -> u8 { return 0x80 | (m_io_mouse[2]->read() & 0x07); })); // #fadf
 
 	// TODO Kempston joy 2 / MD Pad 2
-	map(0x0037, 0x0037).mirror(0xff00).lr8(NAME([this]() -> u8 { return port_37_io_en() ? 0xff : 0xff; }));
+	map(0x0037, 0x0037).mirror(0xff00).lr8(NAME([this]() -> u8 { return port_37_io_en() ? 0x00 : 0x00; }));
 
 	// TODO resolve conflicts mf+joy+DAC: 1f, 3f
 	//map(0x001f, 0x001f).mirror(0xff00).lr8(NAME([]() -> u8 { return 0x00; /* Joy1,2*/ })).lw8(NAME([this](u8 data) {
