@@ -27,13 +27,13 @@ int specnext_im2_device::z80daisy_irq_state()
 
 int specnext_im2_device::z80daisy_irq_ack()
 {
-	m_state |= Z80_DAISY_IEO;
 	return m_vector;
 }
 
 void specnext_im2_device::z80daisy_irq_reti()
 {
-	m_state &= ~Z80_DAISY_IEO;
+	m_state &= ~Z80_DAISY_INT;
+	m_intr_cb(CLEAR_LINE);
 }
 
 TIMER_CALLBACK_MEMBER(specnext_im2_device::irq_off)

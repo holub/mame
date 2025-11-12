@@ -20,11 +20,29 @@ specnext_ctc_device::specnext_ctc_device(const machine_config &mconfig, const ch
 
 int specnext_ctc_device::z80daisy_irq_ack()
 {
+	for (int ch = 0; ch < 4; ch++)
+	{
+		if (channel_int_state(ch) & Z80_DAISY_INT)
+			ch;
+	}
+
 	int const channel = (z80ctc_device::z80daisy_irq_ack() - m_vector) / 2;
 	return ((channel > 0) || (channel_int_state(0) == Z80_DAISY_IEO))
 		? (m_vector + ((channel + 3) << 1))
 		: 0xff;
 }
+
+void specnext_ctc_device::z80daisy_irq_reti()
+{
+	for (int ch = 0; ch < 4; ch++)
+	{
+		if (channel_int_state(ch) & Z80_DAISY_IEO)
+			ch;
+	}
+
+	z80ctc_device::z80daisy_irq_reti();
+}
+
 
 void specnext_ctc_device::ctrl_int_w(u8 ch_mask)
 {
@@ -50,4 +68,15 @@ u8 specnext_ctc_device::ctrl_int_r()
 	}
 
 	return int_mode;
+}
+
+u8 specnext_ctc_device::int_channel_r()
+{
+	for (int ch = 0; ch < 4; ch++)
+	{
+		if (channel_int_state(ch) & Z80_DAISY_INT)
+			return ch;
+	}
+
+	assert(false);
 }

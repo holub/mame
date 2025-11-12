@@ -197,6 +197,7 @@ private:
 	TIMER_CALLBACK_MEMBER(spi_clock);
 	void line_irq_adjust();
 	template <unsigned DeviceId> void int_w(int state);
+	template <unsigned DeviceId> void int_ch_w(int state, u8 channel);
 
 	u8 g_machine_id() { return m_io_issue->read() ? MACHINE_NEXT : MACHINE_TBBLUE; }
 	u8 g_board_issue() { return m_io_issue->read(); }
@@ -2477,7 +2478,6 @@ static const z80_daisy_config z80_daisy_chain[] =
 	{ "im2_line" },
 	{ "ctc" },
 	{ "im2_ula" },
-	//{ "dma" },
 	{ nullptr }
 };
 
@@ -2494,23 +2494,31 @@ TIMER_CALLBACK_MEMBER(specnext_state::line_irq_on)
 
 void specnext_state::ctc_irq_on(int state)
 {
-	specnext_state::int_w<INT_PRIORITY_CTC>(state); // TODO + chanel
+	//if (state)
+	u8 int_ch = state ? m_ctc->int_channel_r() : 0xff;
+
+	if (int_ch != 0xff)
+		specnext_state::int_ch_w<INT_PRIORITY_CTC>(state, int_ch);
 }
 
 template <unsigned DeviceId> void specnext_state::int_w(int state)
 {
+	int_ch_w<DeviceId>(state, 0);
+}
+
+template <unsigned DeviceId> void specnext_state::int_ch_w(int state, u8 channel)
+{
+	//const u16 tmp = m_im2_int_status;
 	if (state)
-	{
-		if (!m_im2_int_status)
-			m_maincpu->set_input_line(INPUT_LINE_IRQ0, ASSERT_LINE);
-		m_im2_int_status |= (1 << DeviceId);
-	}
+		m_im2_int_status |= (1 << (DeviceId + channel));
 	else
-	{
-		m_im2_int_status &= ~(1 << DeviceId);
-		if (!m_im2_int_status)
-			m_maincpu->set_input_line(INPUT_LINE_IRQ0, CLEAR_LINE);
-	}
+		m_im2_int_status &= ~(1 << (DeviceId + channel));
+
+	//if (tmp ^ m_im2_int_status)
+	m_maincpu->set_input_line(INPUT_LINE_IRQ0, state ? ASSERT_LINE : CLEAR_LINE);
+
+	const u16 dma_int_mask = ((m_nr_cc_dma_int_en_0_10 & 1) << INT_PRIORITY_ULA) | (m_nr_cd_dma_int_en_1 << INT_PRIORITY_CTC) | ((m_nr_cc_dma_int_en_0_10 >> 1) << INT_PRIORITY_LINE);
+	m_dma->dma_delay_w((dma_int_mask & m_im2_int_status) ? 1 : 0);
 }
 
 INTERRUPT_GEN_MEMBER(specnext_state::specnext_interrupt)

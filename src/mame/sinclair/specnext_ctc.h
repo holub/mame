@@ -16,8 +16,11 @@ public:
 	void ctrl_int_w(u8 ch_mask);
 	u8 ctrl_int_r();
 
+	u8 int_channel_r();
+
 protected:
 	virtual int z80daisy_irq_ack() override;
+	virtual void z80daisy_irq_reti() override;
 };
 
 DECLARE_DEVICE_TYPE(SPECNEXT_CTC, specnext_ctc_device)
