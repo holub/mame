@@ -123,7 +123,7 @@ void screen_ula_device::draw_ula(bitmap_rgb32 &bitmap, const rectangle &clip, bo
 				{
 					*pix = pen;
 					*prio |= pcode;
-					if (hpos < clip.right())
+					if (!off2 && (hpos < clip.right()))
 					{
 						*(pix + 1) = pen;
 						*(prio + 1) |= pcode;
