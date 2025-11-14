@@ -3775,6 +3775,7 @@ void specnext_state::tbblue(machine_config &config)
 	m_sdcard->spi_miso_callback().set(FUNC(specnext_state::spi_miso_w));
 
 	SPEAKER(config.replace(), "speakers", 2).front();
+	m_speaker->add_route(ALL_OUTPUTS, "speakers", 0.50, 1);
 
 	DAC_8BIT_R2R(config, m_dac[0], 0).add_route(ALL_OUTPUTS, "speakers", 0.75, 0);
 	DAC_8BIT_R2R(config, m_dac[1], 0).add_route(ALL_OUTPUTS, "speakers", 0.75, 0);
