@@ -131,7 +131,11 @@ void specnext_tiles_device::tilemap_update()
 	m_tilemap[1]->map_pen_to_layer(3, 0, TILEMAP_PIXEL_TRANSPARENT);
 	m_tilemap[1]->map_pen_to_layer(3, 1, TILEMAP_PIXEL_TRANSPARENT);
 
-	m_tiles_info = m_host_ram_ptr + ((BIT(m_tm_map_base, 6) ? 7 : 5) << 14) + ((m_tm_map_base & 0x3f) << 8);
+	m_tiles_info = m_host_ram_ptr;
+	if (BIT(m_tm_map_base, 6))
+		m_tiles_info += (7 << 14) + ((m_tm_map_base & 0x1f) << 8);
+	else
+		m_tiles_info += (5 << 14) + ((m_tm_map_base & 0x3f) << 8);
 }
 
 void specnext_tiles_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect, u32 flags, u8 pcode, u8 priority_mask)
