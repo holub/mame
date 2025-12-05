@@ -105,7 +105,11 @@ void specnext_tiles_device::tilemap_update()
 {
 	if (gfx(0) == nullptr) return;
 
-	const u8 *tiles_offset = m_host_ram_ptr + ((BIT(m_tm_tile_base, 6) ? 7 : 5) << 14) + ((m_tm_tile_base & 0x3f) << 8);
+	const u8 *tiles_offset = m_host_ram_ptr;
+	if (BIT(m_tm_tile_base, 6))
+		tiles_offset += (7 << 14) + ((m_tm_tile_base & 0x1f) << 8);
+	else
+		tiles_offset += (5 << 14) + ((m_tm_tile_base & 0x3f) << 8);
 	for (auto i = 0; i < 6; ++i)
 	{
 		gfx(i)->set_source(tiles_offset);
