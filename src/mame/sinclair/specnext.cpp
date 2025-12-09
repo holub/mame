@@ -2274,6 +2274,7 @@ void specnext_state::reg_w(offs_t nr_wr_reg, u8 nr_wr_dat)
 		nr_6f_tilemap_tiles_w(BIT(nr_wr_dat, 7), BIT(nr_wr_dat, 0, 6));
 		break;
 	case 0x70:
+		m_screen->update_now();
 		nr_70_layer2_resolution_w(BIT(nr_wr_dat, 4, 2));
 		nr_70_layer2_palette_offset_w(BIT(nr_wr_dat, 0, 4));
 		break;
