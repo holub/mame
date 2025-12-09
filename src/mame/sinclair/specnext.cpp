@@ -1425,7 +1425,7 @@ u8 specnext_state::reg_r(offs_t nr_register)
 	case 0x07:
 		{
 			u8 cpu_speed = 0;
-			for (u8 clock_scale = BIT(u8(m_maincpu->clock_scale()), 0, 3) >> 1; clock_scale; clock_scale >>= 1, ++cpu_speed);
+			for (u8 clock_scale = BIT(u8(m_maincpu->clock_scale()), 0, 4) >> 1; clock_scale; clock_scale >>= 1, ++cpu_speed);
 			port_253b_dat = (0b00 << 6) | (cpu_speed << 4) | (0b00 << 2) | m_nr_07_cpu_speed;
 		}
 		break;
