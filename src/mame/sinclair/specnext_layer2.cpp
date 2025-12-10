@@ -26,13 +26,14 @@ specnext_layer2_device &specnext_layer2_device::set_palette(const char *tag, u16
 
 rgb_t specnext_layer2_device::blend(u8 &prio, u32 &target, const rgb_t pen, bool is_prio_color, u8 pcode, u8 priority_mask, u8 mixer)
 {
-	if (mixer && (prio != priority_mask))
+	if (mixer && prio && (!(prio & priority_mask) || (prio & ~priority_mask)))
 		return target;
+
+	if (mixer && !prio)
+		mixer = 0;
 
 	if (is_prio_color || mixer || ((prio & priority_mask) == 0))
 	{
-		if (mixer && (prio != priority_mask)) mixer = ~0;
-
 		switch (mixer)
 		{
 		case 0:
@@ -113,8 +114,8 @@ void specnext_layer2_device::draw_256(screen_device &screen, bitmap_rgb32 &bitma
 			}
 			else if (mixer)
 			{
-				if ((*(prio) & priority_mask) == 0) *pix = fallback_color;
-				if ((*(prio + 1) & priority_mask) == 0) *(pix + 1) = fallback_color;
+				*pix = fallback_color;
+				*(pix + 1) = fallback_color;
 			}
 
 			++x %= info[0];
@@ -142,6 +143,7 @@ void specnext_layer2_device::draw_16(screen_device &screen, bitmap_rgb32 &bitmap
 
 	const rgb_t gt0 = rgbexpand<3,3,3>((m_global_transparent << 1) | 0, 6, 3, 0);
 	const rgb_t gt1 = rgbexpand<3,3,3>((m_global_transparent << 1) | 1, 6, 3, 0);
+	const rgb_t fallback_color = palette().pen_color(0x800);
 	const u16 pen_base = (m_layer2_palette_select ? m_palette_alt_offset : m_palette_base_offset) | (m_palette_offset << 4);
 	const u16 x_min = (((clip.left() - offset_h) >> 1) + m_scroll_x) % info[0];
 	const bool x_overscan = m_scroll_x >= info[0] && info[3] == 256;
@@ -165,6 +167,10 @@ void specnext_layer2_device::draw_16(screen_device &screen, bitmap_rgb32 &bitmap
 					const bool prio_color = m_pen_priority[idx];
 					blend(*(prio), *(pix), pen, prio_color, pcode, priority_mask, mixer);
 				}
+				else if (mixer)
+				{
+					*pix = fallback_color;
+				}
 			}
 
 			{
@@ -174,6 +180,10 @@ void specnext_layer2_device::draw_16(screen_device &screen, bitmap_rgb32 &bitmap
 				{
 					const bool prio_color = m_pen_priority[idx];
 					blend(*(prio + 1), *(pix + 1), pen, prio_color, pcode, priority_mask, mixer);
+				}
+				else if (mixer)
+				{
+					*(pix + 1) = fallback_color;
 				}
 			}
 

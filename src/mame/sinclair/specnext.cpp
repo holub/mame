@@ -952,7 +952,10 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 	const bool flash = u64(screen.frame_number() / m_frame_invert_count) & 1;
 	// background
 	if (ula_en)
+	{
 		m_ula_scr->draw_border(bitmap, cliprect, m_port_fe_data & 0x07);
+		bitmap.fill(m_palette->pen_color(UTM_FALLBACK_PEN), clip256x192);
+	}
 	else
 		bitmap.fill(m_palette->pen_color(UTM_FALLBACK_PEN), cliprect);
 
@@ -984,7 +987,7 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 	}
 	else // colors mixing case
 	{
-		if(m_nr_68_blend_mode == 0b00 || m_nr_68_blend_mode == 0b10) // blending with ULA
+		if(ula_en && (m_nr_68_blend_mode == 0b00 || m_nr_68_blend_mode == 0b10)) // blending with ULA
 		{
 			screen.priority().fill(1, cliprect);
 			screen.priority().fill(0, clip256x192);
@@ -1031,7 +1034,7 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 			}
 			if (tiles_en) m_tiles->draw(screen, bitmap, clip320x256, TILEMAP_DRAW_CATEGORY(2), 2);
 		}
-		// mixes only to 1
+		// mixes only to 1 with no others
 		if (layer2_en) m_layer2->draw_mix(screen, bitmap, clip320x256, m_nr_15_layer_priority & 1);
 	}
 	// sprites below foreground
