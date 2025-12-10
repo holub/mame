@@ -950,7 +950,6 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 	const bool sprites_en = m_nr_15_sprite_en && BIT(layers_dev, 3);
 
 	const bool flash = u64(screen.frame_number() / m_frame_invert_count) & 1;
-	screen.priority().fill(0, cliprect);
 	// background
 	if (ula_en)
 		m_ula_scr->draw_border(bitmap, cliprect, m_port_fe_data & 0x07);
@@ -959,6 +958,8 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 
 	if (m_nr_15_layer_priority < 0b110)
 	{
+		screen.priority().fill(0, cliprect);
+
 		static const u8 lcfg[][3] =
 		{
 			// tiles+ula priority; l2 prioryty; l2 mask
@@ -983,15 +984,22 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 	}
 	else // colors mixing case
 	{
+		if(m_nr_68_blend_mode == 0b00 || m_nr_68_blend_mode == 0b10) // blending with ULA
+		{
+			screen.priority().fill(1, cliprect);
+			screen.priority().fill(0, clip256x192);
+		}
+		else
+			screen.priority().fill(0, cliprect);
+
 		if (m_nr_68_blend_mode == 0b00) // Use ULA as blend layer
 		{
-			if (tiles_en) m_tiles->draw(screen, bitmap, clip320x256, TILEMAP_DRAW_CATEGORY(1), 1);
 			if (ula_en && BIT(~m_nr_6b_tm_control, 3))
 			{
 				if (m_nr_15_lores_en) m_lores->draw(screen, bitmap, clip256x192, 1);
 				else m_ula_scr->draw(screen, bitmap, clip256x192, flash, 1);
 			}
-			if (tiles_en) m_tiles->draw(screen, bitmap, clip320x256, TILEMAP_DRAW_CATEGORY(2), 1);
+			if (tiles_en) m_tiles->draw(screen, bitmap, clip320x256, TILEMAP_DRAW_ALL_CATEGORIES, 2);
 		}
 		else if (m_nr_68_blend_mode == 0b10) // Use result of ULA + Tilemap
 		{
@@ -1013,7 +1021,7 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 			}
 			if (tiles_en) m_tiles->draw(screen, bitmap, clip320x256, TILEMAP_DRAW_CATEGORY(2), 1);
 		}
-		else // No blending (disable blend)
+		else // 0b01 - No blending (disable blend)
 		{
 			if (tiles_en) m_tiles->draw(screen, bitmap, clip320x256, TILEMAP_DRAW_CATEGORY(1), 2);
 			if (ula_en && BIT(~m_nr_6b_tm_control, 3))

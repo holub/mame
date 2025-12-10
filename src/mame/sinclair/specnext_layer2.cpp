@@ -24,24 +24,34 @@ specnext_layer2_device &specnext_layer2_device::set_palette(const char *tag, u16
 	return *this;
 }
 
-rgb_t specnext_layer2_device::blend(u32 &target, const rgb_t pen, u8 mixer)
+rgb_t specnext_layer2_device::blend(u8 &prio, u32 &target, const rgb_t pen, bool is_prio_color, u8 pcode, u8 priority_mask, u8 mixer)
 {
-	switch (mixer)
+	if (mixer && (prio != priority_mask))
+		return target;
+
+	if (is_prio_color || mixer || ((prio & priority_mask) == 0))
 	{
-	case 0:
-		target = pen;
-		break;
-	case 1:
-		target = rgb_t(target) + pen;
-		break;
-	default:
-	{
-		const u8 five = pal3bit(5);
-		const rgb_t t = rgb_t(target);
-		target = rgb_t(0, rgb_t::clamp(t.r() + pen.r() - five)
-			, rgb_t::clamp(t.g() + pen.g() - five)
-			, rgb_t::clamp(t.b() + pen.b() - five));
-	}
+		if (mixer && (prio != priority_mask)) mixer = ~0;
+
+		switch (mixer)
+		{
+		case 0:
+			target = pen;
+			break;
+		case 1:
+			target = rgb_t(target) + pen;
+			break;
+		default:
+		{
+			const u8 five = pal3bit(5);
+			const rgb_t t = rgb_t(target);
+			target = rgb_t(0, rgb_t::clamp(t.r() + pen.r() - five)
+				, rgb_t::clamp(t.g() + pen.g() - five)
+				, rgb_t::clamp(t.b() + pen.b() - five));
+		}
+		}
+
+		prio |= is_prio_color ? 8 : pcode;
 	}
 
 	return target;
@@ -98,21 +108,13 @@ void specnext_layer2_device::draw_256(screen_device &screen, bitmap_rgb32 &bitma
 			if ((pen != gt0) && (pen != gt1))
 			{
 				const bool prio_color = m_pen_priority[idx];
-				if (prio_color || mixer || ((*(prio) & priority_mask) == 0))
-				{
-					blend(*pix, pen, (*(prio) == priority_mask) ? mixer : 0);
-					*(prio) |= prio_color ? 8 : pcode;
-				}
-				if (prio_color || mixer || ((*(prio + 1) & priority_mask) == 0))
-				{
-					blend(*(pix + 1), pen, (*(prio + 1) == priority_mask) ? mixer : 0);
-					*(prio + 1) |= prio_color ? 8 : pcode;
-				}
+				blend(*(prio), *(pix), pen, prio_color, pcode, priority_mask, mixer);
+				blend(*(prio + 1), *(pix + 1), pen, prio_color, pcode, priority_mask, mixer);
 			}
 			else if (mixer)
 			{
-				*pix = fallback_color;
-				*(pix + 1) = fallback_color;
+				if ((*(prio) & priority_mask) == 0) *pix = fallback_color;
+				if ((*(prio + 1) & priority_mask) == 0) *(pix + 1) = fallback_color;
 			}
 
 			++x %= info[0];
@@ -161,11 +163,7 @@ void specnext_layer2_device::draw_16(screen_device &screen, bitmap_rgb32 &bitmap
 				if ((pen != gt0) && (pen != gt1))
 				{
 					const bool prio_color = m_pen_priority[idx];
-					if (prio_color || mixer || ((*(prio) & priority_mask) == 0))
-					{
-						blend(*pix, pen, (*(prio) == priority_mask) ? mixer : 0);
-						*(prio) |= prio_color ? 8 : pcode;
-					}
+					blend(*(prio), *(pix), pen, prio_color, pcode, priority_mask, mixer);
 				}
 			}
 
@@ -175,11 +173,7 @@ void specnext_layer2_device::draw_16(screen_device &screen, bitmap_rgb32 &bitmap
 				if ((pen != gt0) && (pen != gt1))
 				{
 					const bool prio_color = m_pen_priority[idx];
-					if (prio_color || mixer || ((*(prio + 1) & priority_mask) == 0))
-					{
-						blend(*(pix + 1), pen, (*(prio + 1) == priority_mask) ? mixer : 0);
-						*(prio + 1) |= prio_color ? 8 : pcode;
-					}
+					blend(*(prio + 1), *(pix + 1), pen, prio_color, pcode, priority_mask, mixer);
 				}
 			}
 
