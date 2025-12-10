@@ -1981,7 +1981,14 @@ void specnext_state::reg_w(offs_t nr_wr_reg, u8 nr_wr_dat)
 			else if (G_VIDEO_INC == 0b10)
 				m_nr_11_video_timing = (0b00 << 1) | BIT(nr_wr_dat, 0);
 			else
+			{
 				m_nr_11_video_timing = BIT(nr_wr_dat, 0, 3);
+				if (m_nr_11_video_timing > 0)
+				{
+					LOG("[Video Timing] VGA setting %d selected but not supported\n", m_nr_11_video_timing); // MAME supports 0 (VGA) and 7 (HDMI) modes only
+					m_nr_11_video_timing = 0;
+				}
+			}
 		}
 		break;
 	case 0x12:
