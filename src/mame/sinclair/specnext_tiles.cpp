@@ -65,22 +65,19 @@ specnext_tiles_device &specnext_tiles_device::set_palette(const char *tag, u16 b
 
 TILE_GET_INFO_MEMBER(specnext_tiles_device::get_tile_info)
 {
-	const bool attr_in_map = BIT(~m_control, 5);
-	const u8 *data = &m_tiles_info[tile_index << (attr_in_map ? 1 : 0)];
-	u8 attr = attr_in_map ? *(data + attr_in_map) : m_default_flags;
+	const bool strip_flags_n = BIT(~m_control, 5);
+	const u8 *data = &m_tiles_info[tile_index << (strip_flags_n ? 1 : 0)];
+	u8 attr = strip_flags_n ?*(data + strip_flags_n) :  m_default_flags;
 	u16 code = *data;
+	u32 category = 1;
 
-	u32 category;
 	if (BIT(m_control, 1))
-	{
 		code |= BIT(attr, 0) << 8;
-		category = BIT(m_control, 0) ? 2 : 1;
-	}
 	else
-	{
 		category = BIT(attr, 0) ? 1 : 2;
-	}
-	tileinfo.category = category;
+
+	const bool tm_on_top = BIT(m_control, 0); // tilemap always on top of ula
+	tileinfo.category = tm_on_top ? 2 : category;
 
 	if (BIT(m_control, 3)) // textmode
 	{
