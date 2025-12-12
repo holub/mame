@@ -1097,7 +1097,7 @@ void specnext_state::ulatm_w(u8 data)
 	u16 nr_palette_value = (data << 1) | BIT(data, 1) | BIT(data, 0);
 	u16 nr_palette_index_utm = (BIT(m_nr_43_palette_write_select, 2) << 8) | (0b11 << 6) | m_port_bf3b_ulap_index;
 
-	m_palette->set_pen_color(nr_palette_index_utm, rgbexpand<3,3,3>(nr_palette_value, 6, 3, 0));
+	m_palette->set_pen_color(nr_palette_index_utm, rgbexpand<3,3,3>(nr_palette_value, 3, 6, 0));
 }
 
 void specnext_state::port_7ffd_reg_w(u8 data)
