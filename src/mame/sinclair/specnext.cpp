@@ -977,7 +977,7 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 
 		const u8 (&l)[3] = lcfg[m_nr_15_layer_priority];
 		if (tiles_en) m_tiles->draw(screen, bitmap, clip320x256, TILEMAP_DRAW_CATEGORY(1), l[0]);
-		if (ula_en && BIT(~m_nr_6b_tm_control, 3))
+		if (ula_en)
 		{
 			if (m_nr_15_lores_en) m_lores->draw(screen, bitmap, clip256x192, l[0]);
 			else m_ula_scr->draw(screen, bitmap, clip256x192, flash, l[0]);
@@ -997,7 +997,7 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 
 		if (m_nr_68_blend_mode == 0b00) // Use ULA as blend layer
 		{
-			if (ula_en && BIT(~m_nr_6b_tm_control, 3))
+			if (ula_en)
 			{
 				if (m_nr_15_lores_en) m_lores->draw(screen, bitmap, clip256x192, 1);
 				else m_ula_scr->draw(screen, bitmap, clip256x192, flash, 1);
@@ -1007,7 +1007,7 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 		else if (m_nr_68_blend_mode == 0b10) // Use result of ULA + Tilemap
 		{
 			if (tiles_en) m_tiles->draw(screen, bitmap, clip320x256, TILEMAP_DRAW_CATEGORY(1), 1);
-			if (ula_en && BIT(~m_nr_6b_tm_control, 3))
+			if (ula_en)
 			{
 				if (m_nr_15_lores_en) m_lores->draw(screen, bitmap, clip256x192, 1);
 				else m_ula_scr->draw(screen, bitmap, clip256x192, flash, 1);
@@ -1017,7 +1017,7 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 		else if (m_nr_68_blend_mode == 0b11) // Use Tilemap as blend layer
 		{
 			if (tiles_en) m_tiles->draw(screen, bitmap, clip320x256, TILEMAP_DRAW_CATEGORY(1), 1);
-			if (ula_en && BIT(~m_nr_6b_tm_control, 3))
+			if (ula_en)
 			{
 				if (m_nr_15_lores_en) m_lores->draw(screen, bitmap, clip256x192, 2);
 				else m_ula_scr->draw(screen, bitmap, clip256x192, flash, 2);
@@ -1027,7 +1027,7 @@ u32 specnext_state::screen_update(screen_device &screen, bitmap_rgb32 &bitmap, c
 		else // 0b01 - No blending (disable blend)
 		{
 			if (tiles_en) m_tiles->draw(screen, bitmap, clip320x256, TILEMAP_DRAW_CATEGORY(1), 2);
-			if (ula_en && BIT(~m_nr_6b_tm_control, 3))
+			if (ula_en)
 			{
 				if (m_nr_15_lores_en) m_lores->draw(screen, bitmap, clip256x192, 2);
 				else m_ula_scr->draw(screen, bitmap, clip256x192, flash, 2);
