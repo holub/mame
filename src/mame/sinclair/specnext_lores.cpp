@@ -56,7 +56,7 @@ void specnext_lores_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, co
 		u16 x4 = x4_min;
 		u8 off4 = x4 & 3;
 		u16 addr = m_mode
-			? (x4 >> 3) + 64 * y // Radastan
+			? (x4 >> 3) + 64 * y + (m_dfile ? 0x2000 : 0) // Radastan
 			: (x4 >> 2) + ((y < 48) ?  128 * y : (128 * (y - 48) + 0x2000)); // Lores/Jimastan
 		const u8 *scr = &screen_location[addr];
 
@@ -94,7 +94,7 @@ void specnext_lores_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, co
 			if (x4 == 0)
 			{
 				addr = m_mode
-					? 64 * y
+					? 64 * y + (m_dfile ? 0x2000 : 0)
 					: (y < 48) ?  128 * y : (128 * (y - 48) + 0x2000);
 				scr = &screen_location[addr];
 			}
