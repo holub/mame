@@ -172,6 +172,7 @@ protected:
 	void palette_val_w(u8 nr_palette_priority, u16 nr_palette_value);
 	u8 port_ff_r();
 	void port_ff_w(u8 data);
+	void ulatm_w(u8 data);
 	void turbosound_address_w(u8 data);
 	template <u8 Lsb> u8 mf_port_r(offs_t addr);
 	template <u8 Lsb> void mf_port_w(offs_t addr, u8 data);
@@ -1088,7 +1089,11 @@ void specnext_state::port_ff_w(u8 data)
 	m_ula_scr->port_ff_reg_w(m_port_ff_data);
 	nr_6a_lores_radastan_xor_w(m_nr_6a_lores_radastan_xor);
 
-	// TODO confirm this
+	ulatm_w(data);
+}
+
+void specnext_state::ulatm_w(u8 data)
+{
 	u16 nr_palette_value = (data << 1) | BIT(data, 1) | BIT(data, 0);
 	u16 nr_palette_index_utm = (BIT(m_nr_43_palette_write_select, 2) << 8) | (0b11 << 6) | m_port_bf3b_ulap_index;
 
@@ -2945,7 +2950,9 @@ void specnext_state::map_io(address_map &map)
 	}), NAME([this](u8 data) {
 		if (port_ulap_io_en())
 		{
-			if (m_port_bf3b_ulap_mode == 0b01)
+			if (m_port_bf3b_ulap_mode == 0b00)
+				ulatm_w(data);
+			else if (m_port_bf3b_ulap_mode == 0b01)
 				port_ff3b_ulap_en_w(BIT(data, 0));
 		}
 	})); // ULA+ Data
