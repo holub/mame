@@ -55,13 +55,25 @@ void specnext_lores_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, co
 		const u16 y = ((vpos - m_offset_v + m_scroll_y) % SCREEN_AREA.height()) >> 1;
 		u16 x4 = x4_min;
 		u8 off4 = x4 & 3;
-		const u8 *scr = &screen_location[(x4 >> 2) + ((y < 48) ?  128 * y : (128 * (y - 48) + 0x2000))];
+		u16 addr = m_mode
+			? (x4 >> 3) + 64 * y // Radastan
+			: (x4 >> 2) + ((y < 48) ?  128 * y : (128 * (y - 48) + 0x2000)); // Lores/Jimastan
+		const u8 *scr = &screen_location[addr];
 
 		u32 *pix = &(bitmap.pix(vpos, clip.left()));
 		u8 *prio = &(screen.priority().pix(vpos, clip.left()));
 		for (u16 hpos = clip.left(); hpos <= clip.right(); hpos += 4, pix += 4, prio += 4)
 		{
-			const rgb_t pen = palette().pen_color(pen_base + *scr);
+			u8 attr = *scr;
+			if (m_mode)
+			{
+				if (x4 & 4)
+					attr >>= 4;
+				else
+					attr &= 0x0f;
+			}
+
+			const rgb_t pen = palette().pen_color(pen_base + attr);
 			if ((pen != gt0) && (pen != gt1))
 			{
 				for (u8 i = 0; (i < 4 - off4) && ((hpos + i) <= clip.right()); ++i)
@@ -80,8 +92,13 @@ void specnext_lores_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, co
 			}
 			x4 = (x4 + 4) % (SCREEN_AREA.width() << 1);
 			if (x4 == 0)
-				scr = &screen_location[(y < 48) ?  128 * y : (128 * (y - 48) + 0x2000)];
-			else
+			{
+				addr = m_mode
+					? 64 * y
+					: (y < 48) ?  128 * y : (128 * (y - 48) + 0x2000);
+				scr = &screen_location[addr];
+			}
+			else if (!m_mode || (x4 & 4))
 				++scr;
 		}
 	}
