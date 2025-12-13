@@ -133,7 +133,7 @@ void specnext_layer2_device::draw_16(screen_device &screen, bitmap_rgb32 &bitmap
 {
 	const u16 (&info)[5] = LAYER2_INFO[1];
 
-	rectangle clip = rectangle{ m_clip_x1 << 2, (std::min<u16>(m_clip_x2, info[0] - 1) << 2) | 0b11, m_clip_y1, std::min<u8>(m_clip_y2, info[1] - 1) };
+	rectangle clip = rectangle{ m_clip_x1 << 2, (std::min<u16>(m_clip_x2 + 1, info[0]) << 2) - 1, m_clip_y1, std::min<u8>(m_clip_y2, info[1] - 1) };
 
 	u16 offset_h = m_offset_h - (info[2] << 1);
 	u16 offset_v = m_offset_v - info[2];
