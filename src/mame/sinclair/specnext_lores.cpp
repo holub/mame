@@ -68,9 +68,9 @@ void specnext_lores_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, co
 			if (m_mode)
 			{
 				if (x4 & 4)
-					attr >>= 4;
-				else
 					attr &= 0x0f;
+				else
+					attr >>= 4;
 			}
 
 			const rgb_t pen = palette().pen_color(pen_base + attr);
@@ -98,7 +98,7 @@ void specnext_lores_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, co
 					: (y < 48) ?  128 * y : (128 * (y - 48) + 0x2000);
 				scr = &screen_location[addr];
 			}
-			else if (!m_mode || (x4 & 4))
+			else if (!m_mode || !(x4 & 4))
 				++scr;
 		}
 	}
