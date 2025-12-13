@@ -1088,8 +1088,6 @@ void specnext_state::port_ff_w(u8 data)
 	m_port_ff_data = data; // ==port_ff_dat_tmx
 	m_ula_scr->port_ff_reg_w(m_port_ff_data);
 	nr_6a_lores_radastan_xor_w(m_nr_6a_lores_radastan_xor);
-
-	ulatm_w(data);
 }
 
 void specnext_state::ulatm_w(u8 data)
