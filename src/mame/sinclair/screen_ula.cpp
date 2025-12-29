@@ -18,7 +18,7 @@
 
 screen_ula_device::screen_ula_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, type, tag, owner, clock)
-	, device_gfx_interface(mconfig, *this)
+	, specnext_video_layer_interface(mconfig, *this)
 {
 }
 screen_ula_plus_device::screen_ula_plus_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock) :
@@ -31,14 +31,6 @@ screen_ula_next_device::screen_ula_next_device(const machine_config &mconfig, co
 	screen_ula_device(mconfig, SCREEN_ULA_NEXT, tag, owner, clock)
 {
 	m_ula_type = ULA_TYPE_NEXT;
-}
-
-screen_ula_device &screen_ula_device::set_palette(const char *tag, u16 base_offset, u16 alt_offset)
-{
-	device_gfx_interface::set_palette(tag);
-	m_palette_base_offset = base_offset,
-	m_palette_alt_offset = alt_offset;
-	return *this;
 }
 
 u8 screen_ula_device::screen_mode()
@@ -217,7 +209,7 @@ void screen_ula_device::ulanext_format_w(u8 ulanext_format)
 
 std::pair<rgb_t, rgb_t> screen_ula_device::parse_attribute(u8 attr)
 {
-	const u16 pal_base = m_ula_palette_select ? m_palette_alt_offset : m_palette_base_offset;
+	const u16 pal_base = m_alt_palette_select ? m_palette_alt_offset : m_palette_base_offset;
 	u16 pap, ink;
 	if (m_ulanext_en)
 	{
@@ -242,11 +234,6 @@ std::pair<rgb_t, rgb_t> screen_ula_device::parse_attribute(u8 attr)
 
 void screen_ula_device::device_add_mconfig(machine_config &config)
 {
-	m_offset_h = 0;
-	m_offset_v = 0;
-
-	m_global_transparent = 0xaa; // TODO feature toggle
-	m_ula_palette_select = 0;
 	m_ulanext_en = 0;
 	m_ulap_en = 0;
 	m_port_ff_reg = 0;
@@ -262,8 +249,6 @@ void screen_ula_device::device_add_mconfig(machine_config &config)
 
 void screen_ula_device::device_start()
 {
-	save_item(NAME(m_global_transparent));
-	save_item(NAME(m_ula_palette_select));
 	save_item(NAME(m_ulanext_en));
 	save_item(NAME(m_ulanext_format));
 	save_item(NAME(m_ink_mask));

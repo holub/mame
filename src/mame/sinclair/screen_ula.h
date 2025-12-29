@@ -5,16 +5,13 @@
 
 #pragma once
 
-class screen_ula_device : public device_t, public device_gfx_interface
+#include "specnext_video_layer.h"
+
+class screen_ula_device : public device_t, public specnext_video_layer_interface
 {
 
 public:
-	screen_ula_device &set_raster_offset(u16 offset_h,  u16 offset_v) { m_offset_h = offset_h; m_offset_v = offset_v; return *this; }
 	screen_ula_device &set_host_ram_ptr(const u8 *host_ram_ptr) { m_host_ram_ptr = host_ram_ptr; return *this; }
-	screen_ula_device &set_palette(const char *tag, u16 base_offset, u16 alt_offset);
-
-	void set_global_transparent(u8 global_transparent) { m_global_transparent = global_transparent; }
-	void ula_palette_select_w(bool ula_palette_select) { m_ula_palette_select = ula_palette_select; }
 
 	void ula_shadow_en_w(bool ula_shadow_en) { m_ula_shadow_en = ula_shadow_en; }
 	void ulanext_en_w(bool ulanext_en) { m_ulanext_en = ulanext_en; }
@@ -54,12 +51,7 @@ protected:
 private:
 	static inline constexpr u16 UTM_FALLBACK_PEN = 0x800;
 
-	u16 m_offset_h, m_offset_v;
 	const u8 *m_host_ram_ptr;
-	u8 m_global_transparent;
-	u16 m_palette_base_offset;
-	u16 m_palette_alt_offset;
-	bool m_ula_palette_select;
 
 	bool m_ulanext_en;
 	u8 m_ulanext_format;

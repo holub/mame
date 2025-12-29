@@ -22,7 +22,7 @@
 
 specnext_lores_device::specnext_lores_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, SPECNEXT_LORES, tag, owner, clock)
-	, device_gfx_interface(mconfig, *this)
+	, specnext_video_layer_interface(mconfig, *this)
 {
 }
 
@@ -46,7 +46,7 @@ void specnext_lores_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, co
 
 	const rgb_t gt0 = rgbexpand<3,3,3>((m_global_transparent << 1) | 0, 6, 3, 0);
 	const rgb_t gt1 = rgbexpand<3,3,3>((m_global_transparent << 1) | 1, 6, 3, 0);
-	u16 pen_base = (m_lores_palette_select ? m_palette_alt_offset : m_palette_base_offset);
+	u16 pen_base = (m_alt_palette_select ? m_palette_alt_offset : m_palette_base_offset);
 	if (m_mode) pen_base |= (((m_ulap_en ? 0b1100 : 0) | m_lores_palette_offset) << 4);
 
 	const u8 *screen_location = m_host_ram_ptr + (5 << 14);
@@ -106,17 +106,8 @@ void specnext_lores_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, co
 	}
 }
 
-void specnext_lores_device::device_add_mconfig(machine_config &config)
-{
-	m_offset_h = 0;
-	m_offset_v = 0;
-}
-
 void specnext_lores_device::device_start()
 {
-	save_item(NAME(m_global_transparent));
-	save_item(NAME(m_lores_palette_select));
-
 	save_item(NAME(m_mode));
 	save_item(NAME(m_dfile));
 	save_item(NAME(m_ulap_en));

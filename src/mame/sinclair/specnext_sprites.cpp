@@ -55,7 +55,7 @@ GFXDECODE_END
 
 specnext_sprites_device::specnext_sprites_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, SPECNEXT_SPRITES, tag, owner, clock)
-	, device_gfx_interface(mconfig, *this, gfx_sprites)
+	, specnext_video_layer_interface(mconfig, *this, gfx_sprites)
 	, m_sprite_pattern_ram(*this, "pattern_ram", 64 * 256, ENDIANNESS_LITTLE)
 	, m_sprite_attr_ram(*this, "attr_ram", 128 * 8, ENDIANNESS_LITTLE)
 {
@@ -192,7 +192,7 @@ void specnext_sprites_device::update_config()
 	for (auto i = 0; i < 4; ++i)
 	{
 		gfx(i)->set_granularity(16); // Change granularity to 16 for 8bpp
-		gfx(i)->set_colorbase(m_sprite_palette_select ? m_palette_alt_offset : m_palette_base_offset);
+		gfx(i)->set_colorbase(m_alt_palette_select ? m_palette_alt_offset : m_palette_base_offset);
 	}
 
 	m_clip_window = SCREEN_AREA; // over + !clip
@@ -336,15 +336,11 @@ void specnext_sprites_device::mirror_data_w(u8 mirror_data)
 
 void specnext_sprites_device::device_add_mconfig(machine_config &config)
 {
-	m_offset_h = 0;
-	m_offset_v = 0;
 	m_clip_window = SCREEN_AREA;
 }
 
 void specnext_sprites_device::device_start()
 {
-	save_item(NAME(m_sprite_palette_select));
-
 	save_item(NAME(m_zero_on_top));
 	save_item(NAME(m_border_clip_en));
 	save_item(NAME(m_over_border));

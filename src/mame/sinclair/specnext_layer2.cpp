@@ -12,7 +12,7 @@
 
 specnext_layer2_device::specnext_layer2_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, SPECNEXT_LAYER2, tag, owner, clock)
-	, device_gfx_interface(mconfig, *this)
+	, specnext_video_layer_interface(mconfig, *this)
 {
 }
 
@@ -127,7 +127,7 @@ void specnext_layer2_device::draw_256(screen_device &screen, bitmap_rgb32 &bitma
 	if (clip.empty())
 		return;
 
-	const u16 pen_base = (m_layer2_palette_select ? m_palette_alt_offset : m_palette_base_offset) | (m_palette_offset << 4);
+	const u16 pen_base = (m_alt_palette_select ? m_palette_alt_offset : m_palette_base_offset) | (m_palette_offset << 4);
 	const u16 x_min = (((clip.left() - offset_h) >> 1) + m_scroll_x) % info[0];
 	const bool x_overscan = m_scroll_x >= info[0] && info[3] == 256;
 	for (u16 vpos = clip.top(); vpos <= clip.bottom(); vpos++)
@@ -170,7 +170,7 @@ void specnext_layer2_device::draw_16(screen_device &screen, bitmap_rgb32 &bitmap
 	if (clip.empty())
 		return;
 
-	const u16 pen_base = (m_layer2_palette_select ? m_palette_alt_offset : m_palette_base_offset) | (m_palette_offset << 4);
+	const u16 pen_base = (m_alt_palette_select ? m_palette_alt_offset : m_palette_base_offset) | (m_palette_offset << 4);
 	const u16 x_min = (((clip.left() - offset_h) >> 1) + m_scroll_x) % info[0];
 	const bool x_overscan = m_scroll_x >= info[0] && info[3] == 256;
 	for (u16 vpos = clip.top(); vpos <= clip.bottom(); vpos++)
@@ -209,16 +209,8 @@ void specnext_layer2_device::draw_16(screen_device &screen, bitmap_rgb32 &bitmap
 	}
 }
 
-void specnext_layer2_device::device_add_mconfig(machine_config &config)
-{
-	m_offset_h = 0;
-	m_offset_v = 0;
-}
-
 void specnext_layer2_device::device_start()
 {
-	save_item(NAME(m_global_transparent));
-	save_item(NAME(m_layer2_palette_select));
 	save_pointer(NAME(m_pen_priority), 512 * 4);
 
 	save_item(NAME(m_layer2_en));

@@ -5,18 +5,16 @@
 
 #pragma once
 
-class specnext_layer2_device : public device_t, public device_gfx_interface
+#include "specnext_video_layer.h"
+
+class specnext_layer2_device : public device_t, public specnext_video_layer_interface
 {
 
 public:
 	specnext_layer2_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
 
-	specnext_layer2_device &set_raster_offset(u16 offset_h,  u16 offset_v) { m_offset_h = offset_h; m_offset_v = offset_v; return *this; }
 	specnext_layer2_device &set_host_ram_ptr(const u8 *host_ram_ptr) { m_host_ram_ptr = host_ram_ptr; return *this; }
-	specnext_layer2_device &set_palette(const char *tag, u16 base_offset, u16 alt_offset);
 
-	void set_global_transparent(u8 global_transparent) { m_global_transparent = global_transparent; }
-	void layer2_palette_select_w(bool layer2_palette_select) { m_layer2_palette_select = layer2_palette_select; }
 	void pen_priority_w(u16 pen, bool priority) { m_pen_priority[pen] = priority; }
 
 	void layer2_en_w(bool layer2_en) { m_layer2_en = layer2_en; }
@@ -43,7 +41,6 @@ protected:
 		{   320,    256,     32,   256,     1 },
 	};
 
-	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
 
@@ -51,12 +48,7 @@ private:
 	template <typename FunctionClass> void draw_256(screen_device &screen, bitmap_rgb32 &bitmap, bitmap_rgb32 &blendprio, const rectangle &cliprect, FunctionClass blend_op);
 	template <typename FunctionClass> void draw_16(screen_device &screen, bitmap_rgb32 &bitmap, bitmap_rgb32 &blendprio, const rectangle &cliprect, FunctionClass blend_op);
 
-	u16 m_offset_h, m_offset_v;
 	const u8 *m_host_ram_ptr;
-	u8 m_global_transparent;
-	u16 m_palette_base_offset;
-	u16 m_palette_alt_offset;
-	bool m_layer2_palette_select;
 	bool m_pen_priority[512 * 4];
 
 	bool m_layer2_en;

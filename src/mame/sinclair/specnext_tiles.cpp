@@ -49,7 +49,7 @@ GFXDECODE_END
 
 specnext_tiles_device::specnext_tiles_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
 	: device_t(mconfig, SPECNEXT_TILES, tag, owner, clock)
-	, device_gfx_interface(mconfig, *this, gfx_tiles)
+	, specnext_video_layer_interface(mconfig, *this, gfx_tiles)
 {
 }
 
@@ -152,13 +152,6 @@ void specnext_tiles_device::draw(screen_device &screen, bitmap_rgb32 &bitmap, co
 		m_tilemap[BIT(m_control, 6)]->draw(screen, bitmap, clip, flags, pcode, priority_mask);
 }
 
-void specnext_tiles_device::device_add_mconfig(machine_config &config)
-{
-	m_offset_h = 0;
-	m_offset_v = 0;
-	m_global_transparent = 0xaa;
-}
-
 void specnext_tiles_device::device_start()
 {
 	m_tilemap[0] = &machine().tilemap().create(*this
@@ -168,8 +161,6 @@ void specnext_tiles_device::device_start()
 		, tilemap_get_info_delegate(*this, FUNC(specnext_tiles_device::get_tile_info))
 		, TILEMAP_SCAN_ROWS, 8, 8, 80, 32);
 
-	save_item(NAME(m_global_transparent));
-	save_item(NAME(m_tm_palette_select));
 	save_item(NAME(m_control));
 	save_item(NAME(m_default_flags));
 	save_item(NAME(m_transp_colour));

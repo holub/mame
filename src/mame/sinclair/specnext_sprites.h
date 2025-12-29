@@ -5,19 +5,21 @@
 
 #pragma once
 
-class specnext_sprites_device : public device_t, public device_gfx_interface
+#include "specnext_video_layer.h"
+
+class specnext_sprites_device : public device_t, public specnext_video_layer_interface
 {
 
 public:
 	specnext_sprites_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock);
 
-	specnext_sprites_device &set_raster_offset(u16 offset_h,  u16 offset_v) { m_offset_h = offset_h - (OVER_BORDER << 1); m_offset_v = offset_v - OVER_BORDER; update_config(); return *this; }
-	specnext_sprites_device &set_palette(const char *tag, u16 base_offset, u16 alt_offset);
+	virtual specnext_video_layer_interface &set_raster_offset(u16 offset_h,  u16 offset_v) override { m_offset_h = offset_h - (OVER_BORDER << 1); m_offset_v = offset_v - OVER_BORDER; update_config(); return *this; }
+	virtual specnext_video_layer_interface &set_palette(const char *tag, u16 base_offset, u16 alt_offset) override;
 
 	void update_sprites_cache();
 	void draw(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect, u32 pmask);
 
-	void sprite_palette_select_w(bool sprite_palette_select) { m_sprite_palette_select = sprite_palette_select; update_config(); }
+	virtual void alt_palette_select_w(bool alt_palette_select) override { m_alt_palette_select = alt_palette_select; update_config(); }
 
 	void zero_on_top_w(bool zero_on_top) { m_zero_on_top = zero_on_top; }
 	void border_clip_en_w(bool border_clip_en) { m_border_clip_en = border_clip_en; update_config(); }
@@ -69,11 +71,7 @@ private:
 	};
 
 	std::vector<sprite_data> m_sprites_cache;
-	u16 m_offset_h, m_offset_v;
 	rectangle m_clip_window;
-	u16 m_palette_base_offset;
-	u16 m_palette_alt_offset;
-	bool m_sprite_palette_select;
 
 	bool m_zero_on_top;
 	bool m_border_clip_en;

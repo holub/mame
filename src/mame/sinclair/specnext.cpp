@@ -260,9 +260,9 @@ private:
 
 	void nr_42_ulanext_format_w(u8 data) { m_nr_42_ulanext_format = data; m_ula_scr->ulanext_format_w(m_nr_42_ulanext_format); }
 	void nr_43_ulanext_en_w(bool data) { m_nr_43_ulanext_en = data; m_ula_scr->ulanext_en_w(m_nr_43_ulanext_en); m_lores->ulap_en_w(m_port_ff3b_ulap_en && !m_nr_43_ulanext_en); }
-	void nr_43_active_ula_palette_w(bool data) { m_nr_43_active_ula_palette = data; m_ula_scr->ula_palette_select_w(m_nr_43_active_ula_palette); m_lores->lores_palette_select_w(m_nr_43_active_ula_palette); }
-	void nr_43_active_layer2_palette_w(bool data) { m_nr_43_active_layer2_palette = data; m_layer2->layer2_palette_select_w(m_nr_43_active_layer2_palette); }
-	void nr_43_active_sprite_palette_w(bool data) { m_nr_43_active_sprite_palette = data; m_sprites->sprite_palette_select_w(m_nr_43_active_sprite_palette); }
+	void nr_43_active_ula_palette_w(bool data) { m_nr_43_active_ula_palette = data; m_ula_scr->alt_palette_select_w(m_nr_43_active_ula_palette); m_lores->alt_palette_select_w(m_nr_43_active_ula_palette); }
+	void nr_43_active_layer2_palette_w(bool data) { m_nr_43_active_layer2_palette = data; m_layer2->alt_palette_select_w(m_nr_43_active_layer2_palette); }
+	void nr_43_active_sprite_palette_w(bool data) { m_nr_43_active_sprite_palette = data; m_sprites->alt_palette_select_w(m_nr_43_active_sprite_palette); }
 
 	void nr_4b_sprite_transparent_index_w(u8 data) { m_nr_4b_sprite_transparent_index = data; m_sprites->transp_colour_w(m_nr_4b_sprite_transparent_index); }
 	void nr_4c_tm_transparent_index_w(u8 data) { m_nr_4c_tm_transparent_index = data; m_tiles->transp_colour_w(m_nr_4c_tm_transparent_index); }
