@@ -207,7 +207,6 @@ private:
 	virtual TIMER_CALLBACK_MEMBER(irq_on) override;
 	INTERRUPT_GEN_MEMBER(specnext_interrupt);
 	TIMER_CALLBACK_MEMBER(line_irq_on);
-	void ctc_int_w(int state);
 	INTERRUPT_GEN_MEMBER(line_interrupt);
 	TIMER_CALLBACK_MEMBER(spi_clock);
 	void line_irq_adjust();
