@@ -4000,6 +4000,11 @@ ROM_START(tbblue)
 	ROM_SYSTEM_BIOS(1, "bootab", "BootROM - AntiBrick")
 	ROMX_LOAD( "bootrom-ab.cfffa702.bin", 0x0000, 0x2000, CRC(1d16e9d4) SHA1(6f9c8771e5a9ef5a6b52a31b2e65f0698f0f5cfa), ROM_BIOS(1))
 
+	ROM_SYSTEM_BIOS(2, "v30204", "BootROM, since 3.02.04")
+	ROMX_LOAD( "bootrom.01676e24.bin", 0x0000, 0x2000, CRC(95118eb6) SHA1(acf5112e831be8c73952b8513fab33a427e88cf8), ROM_BIOS(2))
+	ROM_SYSTEM_BIOS(3, "v30204ab", "BootROM(AntiBrick), since 3.02.04")
+	ROMX_LOAD( "bootrom-ab.01676e24.bin", 0x0000, 0x2000, CRC(96c32007) SHA1(6c9fcbd282f7a18fb5a726386ac6fb9df209c36b), ROM_BIOS(3))
+
 ROM_END
 
 } // Anonymous namespace
