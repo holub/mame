@@ -1,5 +1,5 @@
 // license:BSD-3-Clause
-// copyright-holders:Aaron Giles, Vas Crabb
+// copyright-holders:Aaron Giles, Vas Crabb, Janko Stamenović
 //============================================================
 //
 //  debugwin.cpp - Win32 debug window handling
@@ -40,6 +40,31 @@
 namespace osd {
 
 namespace {
+
+class win_timer {
+public:
+	win_timer() : m_timer_id(0) {}
+	~win_timer()
+	{
+		kill();
+	}
+	void set_timer(HWND hwnd, UINT_PTR id_event, UINT u_elapse)
+	{
+		kill();
+		m_idevent = id_event;
+		m_hwnd = hwnd;
+		m_timer_id = SetTimer(hwnd, id_event, u_elapse, (TIMERPROC)NULL);
+	}
+	void kill()
+	{
+		if (m_timer_id)
+			KillTimer(m_hwnd, m_idevent);
+	}
+private:
+	UINT_PTR m_idevent;
+	HWND m_hwnd;
+	UINT_PTR m_timer_id;
+};
 
 class debugger_windows :
 		public osd_module,
@@ -120,6 +145,8 @@ private:
 	bool m_save_windows;
 	bool m_group_windows;
 	bool m_group_windows_setting;
+
+	win_timer m_min_periodic_timer;
 };
 
 
@@ -163,10 +190,10 @@ void debugger_windows::wait_for_debugger(device_t &device, bool firststop)
 	{
 		m_main_console = create_window<debugger::win::consolewin_info>();
 
+		HWND const front_hwnd = dynamic_cast<win_window_info &>(*osd_common_t::window_list().front()).platform_window();
+
 		// set the starting position for new auxiliary windows
-		HMONITOR const nearest_monitor = MonitorFromWindow(
-				dynamic_cast<win_window_info &>(*osd_common_t::window_list().front()).platform_window(),
-				MONITOR_DEFAULTTONEAREST);
+		HMONITOR const nearest_monitor = MonitorFromWindow(front_hwnd, MONITOR_DEFAULTTONEAREST);
 		if (nearest_monitor)
 		{
 			MONITORINFO info;
@@ -181,6 +208,11 @@ void debugger_windows::wait_for_debugger(device_t &device, bool firststop)
 				m_window_start_x = m_next_window_pos.x;
 			}
 		}
+
+		// 10 == 100 times per second tick to interrupt GetMessage
+		// when no user input messages happen
+		// which allows lua's periodic to be called periodically
+		m_min_periodic_timer.set_timer(front_hwnd, WM_USER+1, 10);
 	}
 
 	// update the views in the console to reflect the current CPU
