@@ -197,13 +197,13 @@ std::error_condition osd_file::open(std::string const &path, uint32_t openflags,
 		access = (openflags & OPEN_FLAG_READ) ? (GENERIC_READ | GENERIC_WRITE) : GENERIC_WRITE;
 		if (is_path_to_physical_drive(path.c_str()))
 			access |= GENERIC_READ;
-		sharemode = FILE_SHARE_READ;
+		sharemode = FILE_SHARE_READ  | FILE_SHARE_WRITE;
 	}
 	else if (openflags & OPEN_FLAG_READ)
 	{
 		disposition = OPEN_EXISTING;
 		access = GENERIC_READ;
-		sharemode = FILE_SHARE_READ;
+		sharemode = FILE_SHARE_READ | FILE_SHARE_WRITE;
 	}
 	else
 	{
