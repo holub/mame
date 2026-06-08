@@ -161,7 +161,7 @@ void debugger_osx::wait_for_debugger(device_t &device, bool firststop)
 
 	// get and process messages
 	NSEvent *ev = [NSApp nextEventMatchingMask:NSEventMaskAny
-									 untilDate:[NSDate distantFuture]
+									 untilDate:[NSDate dateWithTimeIntervalSinceNow:0.001]
 										inMode:NSDefaultRunLoopMode
 									   dequeue:YES];
 	if (ev != nil)
