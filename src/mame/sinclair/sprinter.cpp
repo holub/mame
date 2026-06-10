@@ -222,8 +222,8 @@ private:
 	void do_accel_block(bool is_read);
 	void accel_mem_r(offs_t offset);
 	void accel_mem_w(offs_t offset, u8 data);
-	u8 &accel_buffer(u8 idx);
-	void update_accel_buffer(u8 idx, u8 data);
+	u8 &accel_buffer(u16 idx);
+	void update_accel_buffer(u16 idx, u8 data);
 
 	u8 kbd_fe_r(offs_t offset);
 	void on_kbd_data(int state);
@@ -299,8 +299,8 @@ private:
 	// Accelerator
 	u8 m_prf_d;
 	u8 m_rgacc;
-	u8 m_acc_cnt;
-	u8 m_accel_buffer[256] = {};
+	u16 m_acc_cnt;
+	u8 m_accel_buffer[1024] = {};
 	bool m_alt_acc;
 	u16 m_aagr;
 	u8 m_xcnt;
@@ -308,6 +308,10 @@ private:
 	u8 m_acc_dir;
 	accel_state m_fn_acc;
 	access_state m_access_state;
+	
+	u8 m_acc_ctrl;
+	u8 m_acc_rect_w;
+	u8 m_acc_rect_counter;
 
 	// Covox Blaster
 	u8 m_cbl_xx;
@@ -661,6 +665,13 @@ u8 sprinter_state::dcp_r(offs_t offset)
 		}
 		break;
 
+	case 0x80:
+		data = m_acc_ctrl;
+		break;
+	case 0x81:
+		data = m_acc_rect_w;
+		break;
+		
 	case 0x89:
 		data = m_cbl_xx;
 		break;
@@ -783,6 +794,13 @@ void sprinter_state::dcp_w(offs_t offset, u8 data)
 		m_conf = 0;
 		m_conf_loading = 1;
 		machine().schedule_soft_reset();
+		break;
+
+	case 0x80:
+		m_acc_ctrl = data;
+		break;
+	case 0x81:
+		m_acc_rect_w = data;
 		break;
 
 	case 0x88:
@@ -959,9 +977,10 @@ void sprinter_state::accel_control_r(u8 data)
 TIMER_CALLBACK_MEMBER(sprinter_state::acc_tick)
 {
 	assert(m_access_state == ACCEL_GO);
-	m_acc_cnt = m_rgacc;
+	m_acc_cnt = BIT(m_acc_ctrl, 5) ? (m_rgacc == 0 ? 1024 : m_rgacc * 4) : (m_rgacc == 0 ? 256 : m_rgacc);
+	m_acc_rect_counter = m_acc_rect_w + 1;
 	m_access_state = ACCEL_ON;
-
+	
 	const bool is_read = param & 1;
 	int ticks42 = 0;
 	bool is_block_op = BIT(m_acc_dir, 2);
@@ -1099,7 +1118,27 @@ void sprinter_state::do_accel_block(bool is_read)
 	if (BIT(m_acc_dir, 4)) // graph line
 		m_port_y++;
 	else
-		m_z80_addr++;
+	{
+		if (BIT(m_acc_ctrl, 4) && !is_read) // bit 4 - acc rect mode
+		{
+			m_acc_rect_counter--;
+			if (m_acc_rect_counter == 0)
+			{
+				if (BIT(m_acc_ctrl, 6))
+					m_z80_addr += m_acc_rect_w + 1;
+				else
+					m_z80_addr -= m_acc_rect_w + 1;
+
+				m_acc_rect_counter = m_acc_rect_w + 1;
+				m_port_y++;
+			};
+		}
+
+		if (BIT(m_acc_ctrl, 6))
+			m_z80_addr--;
+		else
+			m_z80_addr++;
+	}
 }
 
 void sprinter_state::accel_mem_r(offs_t offset)
@@ -1118,7 +1157,7 @@ void sprinter_state::accel_mem_w(offs_t offset, u8 data)
 	}
 }
 
-u8 &sprinter_state::accel_buffer(u8 idx)
+u8 &sprinter_state::accel_buffer(u16 idx)
 {
 	if (m_alt_acc)
 	{
@@ -1128,10 +1167,10 @@ u8 &sprinter_state::accel_buffer(u8 idx)
 		m_xagr = xcnt_agr & 0xff;
 	}
 
-	return m_accel_buffer[idx];
+	return m_accel_buffer[1023 & idx];
 }
 
-void sprinter_state::update_accel_buffer(u8 idx, u8 data)
+void sprinter_state::update_accel_buffer(u16 idx, u8 data)
 {
 	switch (m_fn_acc)
 	{
@@ -1203,12 +1242,16 @@ template <u8 Bank> void sprinter_state::ram_w(offs_t offset, u8 data)
 		if (transparent && (data == 0xff))
 			return;
 
-		const u32 vaddr = m_port_y * 1024 + (offset & 0x3ff);
-		const bool vram_only = BIT(page, 2);
-		if (!vram_only)
-			m_ram->pointer()[(0x50 << 14) + vaddr] = data;
+		if (((~m_acc_ctrl & 1) || (((~m_port_y & 128) && (m_acc_ctrl & 2)) || ((m_port_y & 128) && (~m_acc_ctrl & 2)))) // y-clip
+			&& ((~m_acc_ctrl & 4) || (((~offset & 128) && (m_acc_ctrl & 8)) || ((offset & 128) && (~m_acc_ctrl & 8))))) // x-clip
+		{
+			const u32 vaddr = m_port_y * 1024 + (offset & 0x3ff);
+			const bool vram_only = BIT(page, 2);
+			if (!vram_only)
+				m_ram->pointer()[(0x50 << 14) + vaddr] = data;
 
-		vram_w(vaddr, data);
+			vram_w(vaddr, data);
+		}
 	}
 	else
 	{
@@ -1521,11 +1564,15 @@ void sprinter_state::machine_start()
 	save_item(NAME(m_acc_dir));
 	save_item(NAME(m_fn_acc));
 	save_item(NAME(m_access_state));
+	save_item(NAME(m_acc_ctrl));
+	save_item(NAME(m_acc_rect_w));
+	save_item(NAME(m_acc_rect_counter));
 	save_item(NAME(m_cbl_xx));
 	save_item(NAME(m_cbl_data));
 	save_item(NAME(m_cbl_cnt));
 	save_item(NAME(m_cbl_wa));
 	save_item(NAME(m_cbl_wae));
+	
 
 	m_beta->enable();
 
@@ -1616,6 +1663,9 @@ void sprinter_state::machine_reset()
 	m_prf_d = false;
 	m_acc_dir = 0;
 	m_alt_acc = 0;
+	m_acc_ctrl = 0;
+	m_acc_rect_w = 0;
+	m_acc_rect_counter = 0;
 
 	m_cbl_xx = 0;
 	m_cbl_wa = 0;
