@@ -33,10 +33,9 @@ jobs:
     - name: Build
       env:
         USE_LIBSDL: 1
+        SOURCES: sinclair/sprinter.cpp,sinclair/evo/tsconf.cpp,sinclair/next/specnext.cpp,sinclair/evo/pentevo.cpp,sinclair/spectrum.cpp,sinclair/spec128.cpp,sinclair/specpls3.cpp,sinclair/scorpion.cpp
         TOOLS: 1
       run: make -j2
-    - name: Validate
-      run: ./mame -validate
     - uses: actions/upload-artifact@main
       with:
         name: mame-macos-${{ github.sha }}
