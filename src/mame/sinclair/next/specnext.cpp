@@ -20,6 +20,7 @@
 
 #include "../screen_ula.h"
 #include "../spec128.h"
+#include "snapshot_nex.h"
 #include "specnext_copper.h"
 #include "specnext_ctc.h"
 #include "specnext_divmmc.h"
@@ -159,6 +160,7 @@ public:
 	void ks3(machine_config &config);
 
 	INPUT_CHANGED_MEMBER(on_nmi_button);
+	DECLARE_SNAPSHOT_LOAD_MEMBER(nex_snapshot_cb);
 
 protected:
 	virtual void machine_start() override ATTR_COLD;
@@ -398,6 +400,7 @@ private:
 	required_ioport m_io_joy_left;
 	required_ioport m_io_joy_right;
 
+	bool m_emu_dump_allowed;
 	u8 m_machine_id;
 	u8 m_board_issue;
 	u16 m_ram_pages;
@@ -638,6 +641,31 @@ private:
 	bool m_i2c_scl_data;
 	bool m_i2c_sda_data;
 };
+
+SNAPSHOT_LOAD_MEMBER(specnext_state::nex_snapshot_cb)
+{
+	if (image.is_filetype("nex"))
+	{
+		image.fseek(0, SEEK_SET);
+
+		nex_file::hooks h;
+		h.reg_w = [this](u8 reg, u8 data) { m_next_regs.write_byte(reg, data); };
+		h.reg_r = [this](u8 reg) { return m_next_regs.read_byte(reg); };
+		h.poke  = [this](u16 addr, u8 data) { m_program.write_byte(addr, data); };
+
+		nex_file nex;
+		nex_file::result r = nex.load(image, h);
+		if (!r.loaded)
+			return std::make_pair(image_error::INVALIDIMAGE, "Invalid .NEX file");
+
+		m_port_fe_data = (m_port_fe_data & 0xf8) | (r.border_color & 0x07);
+		m_maincpu->set_state_int(Z80_SP, r.sp);
+		m_maincpu->set_state_int(Z80_PC, r.pc);
+
+		return std::make_pair(std::error_condition(), std::string());
+	}
+	return spectrum_state::snapshot_cb(image);
+}
 
 void specnext_state::bank_update(u8 bank, u8 count)
 {
@@ -3424,6 +3452,7 @@ void specnext_state::machine_start()
 	m_nr_10_coreid = 0b00000; // Works but must be 1 if Next core bootrom selected
 
 	// Save
+	save_item(NAME(m_emu_dump_allowed));
 	save_item(NAME(m_page_shadow));
 	save_item(NAME(m_bootrom_en));
 	save_item(NAME(m_video_test_pattern_active));
@@ -3670,6 +3699,8 @@ void specnext_state::device_post_load()
 
 void specnext_state::reset_hard()
 {
+	m_emu_dump_allowed = subdevice<snapshot_image_device>("snapshot")->exists();
+
 	m_nr_02_hard_reset = 0;
 	m_bootrom_en = 1;
 	m_video_test_pattern_active = 0;
@@ -3794,6 +3825,13 @@ void specnext_state::machine_reset()
 
 	if (m_nr_02_hard_reset)
 		reset_hard();
+	else if (m_emu_dump_allowed)
+	{
+		snapshot_image_device *snapshot = subdevice<snapshot_image_device>("snapshot");
+		snapshot->set_delay(attotime::zero);
+		snapshot->call_load();
+		m_emu_dump_allowed = false;
+	}
 
 	m_spi_clock->reset();
 	m_spi_clock_cycles = 0;
@@ -4227,7 +4265,10 @@ void specnext_state::tbblue(machine_config &config)
 
 	SOFTWARE_LIST(config, "sd_list").set_original("specnext_sd");
 
-	config.device_remove("snapshot");
+	// Disabled on startup. System needs to boot required core from sdcard. Our entry point is soft_reset.
+	snapshot_image_device &snapshot(SNAPSHOT(config.replace(), "snapshot", "ach,frz,plusd,prg,sem,sit,sna,snp,snx,sp,spg,z80,zx,nex", attotime::never));
+	snapshot.set_load_callback(FUNC(specnext_state::nex_snapshot_cb));
+	snapshot.set_interface("spectrum_snapshot");
 
 	m_machine_id = 0x08;
 	m_board_issue = 0;
