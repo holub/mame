@@ -400,7 +400,6 @@ private:
 	required_ioport m_io_joy_left;
 	required_ioport m_io_joy_right;
 
-	bool m_emu_dump_allowed;
 	u8 m_machine_id;
 	u8 m_board_issue;
 	u16 m_ram_pages;
@@ -653,10 +652,36 @@ SNAPSHOT_LOAD_MEMBER(specnext_state::nex_snapshot_cb)
 		h.reg_r = [this](u8 reg) { return m_next_regs.read_byte(reg); };
 		h.poke  = [this](u16 addr, u8 data) { m_program.write_byte(addr, data); };
 
+		//m_nr_b8_divmmc_ep_0 = 0x82;
+		//m_nr_b9_divmmc_ep_valid_0 = 0x00;
+		//m_nr_ba_divmmc_ep_timing_0 = 0x00;
+		//m_nr_bb_divmmc_ep_1 = 0xf2;
+
 		nex_file nex;
 		nex_file::result r = nex.load(image, h);
 		if (!r.loaded)
 			return std::make_pair(image_error::INVALIDIMAGE, "Invalid .NEX file");
+
+		// machine_reset() clears port_7FFD/port_1FFD to 0, selecting ROM
+		// page 0 (NEX bank data) instead of page 6 (ESXDOS). The zero-delay
+		// timer fires before any boot code runs, so ports are still 0 here.
+		// Restore the NextZXOS values so RST calls from the NEX program reach
+		// the ESXDOS handler at $0000. Use bank_update directly (not
+		// memory_change) to avoid clobbering the MMU registers that
+		// machine_reset() correctly initialized (e.g. MMU0=0xFF keeps the
+		// ROM area reading from the ROM page, not an MMU-mapped page).
+		//port_7ffd_reg_w(0xff);
+		//m_port_1ffd_data = 0xff;
+		//m_port_1ffd_special_old = true;
+		//bank_update(0, 8);
+
+		// Replicate the NextZXOS register state that the boot process leaves
+		// behind. machine_reset() resets these, and the NEX loads before the
+		// boot process can re-initialize them.
+		//h.reg_w(0x06, 0xa0); // peripherals 1: hotkey cpu speed, speaker beep, 50/60 hotkey
+		//h.reg_w(0x07, 0x33); // cpu speed 28MHz, memContention, legacy config
+		//h.reg_w(0x08, 0x90); // peripherals 3: contention disable, dac disable
+		//h.reg_w(0x0a, 0x11); // peripherals 2: divmmc automap enabled, mouse dpi
 
 		m_port_fe_data = (m_port_fe_data & 0xf8) | (r.border_color & 0x07);
 		m_maincpu->set_state_int(Z80_SP, r.sp);
@@ -3452,7 +3477,6 @@ void specnext_state::machine_start()
 	m_nr_10_coreid = 0b00000; // Works but must be 1 if Next core bootrom selected
 
 	// Save
-	save_item(NAME(m_emu_dump_allowed));
 	save_item(NAME(m_page_shadow));
 	save_item(NAME(m_bootrom_en));
 	save_item(NAME(m_video_test_pattern_active));
@@ -3699,8 +3723,6 @@ void specnext_state::device_post_load()
 
 void specnext_state::reset_hard()
 {
-	m_emu_dump_allowed = subdevice<snapshot_image_device>("snapshot")->exists();
-
 	m_nr_02_hard_reset = 0;
 	m_bootrom_en = 1;
 	m_video_test_pattern_active = 0;
@@ -3825,13 +3847,6 @@ void specnext_state::machine_reset()
 
 	if (m_nr_02_hard_reset)
 		reset_hard();
-	else if (m_emu_dump_allowed)
-	{
-		snapshot_image_device *snapshot = subdevice<snapshot_image_device>("snapshot");
-		snapshot->set_delay(attotime::zero);
-		snapshot->call_load();
-		m_emu_dump_allowed = false;
-	}
 
 	m_spi_clock->reset();
 	m_spi_clock_cycles = 0;
@@ -4266,7 +4281,7 @@ void specnext_state::tbblue(machine_config &config)
 	SOFTWARE_LIST(config, "sd_list").set_original("specnext_sd");
 
 	// Disabled on startup. System needs to boot required core from sdcard. Our entry point is soft_reset.
-	snapshot_image_device &snapshot(SNAPSHOT(config.replace(), "snapshot", "ach,frz,plusd,prg,sem,sit,sna,snp,snx,sp,spg,z80,zx,nex", attotime::never));
+	snapshot_image_device &snapshot(SNAPSHOT(config.replace(), "snapshot", "ach,frz,plusd,prg,sem,sit,sna,snp,snx,sp,spg,z80,zx,nex"));
 	snapshot.set_load_callback(FUNC(specnext_state::nex_snapshot_cb));
 	snapshot.set_interface("spectrum_snapshot");
 
