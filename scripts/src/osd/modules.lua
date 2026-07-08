@@ -625,7 +625,7 @@ newoption {
 }
 
 if not _OPTIONS["NO_OPENGL"] then
-	if _OPTIONS["targetos"] == "android" then
+	if _OPTIONS["targetos"] == "android" or _OPTIONS["targetos"]=="asmjs" then
 		_OPTIONS["NO_OPENGL"] = "1"
 	else
 		_OPTIONS["NO_OPENGL"] = "0"
