@@ -1116,6 +1116,7 @@ configuration { "asmjs" }
 		"-s STACK_SIZE=5MB",
 		"-s MAX_WEBGL_VERSION=2",
 		"-s EXCEPTION_CATCHING_ALLOWED=\"['_ZN15running_machine17start_all_devicesEv','_ZN8chd_file11open_commonEb','_ZN8chd_file13read_metadataEjjRNSt3__212basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE','_ZN8chd_file13read_metadataEjjRNSt3__26vectorIhNS0_9allocatorIhEEEE','_ZNK19netlist_mame_device19base_validity_checkER16validity_checker']\"",
+		"--pre-js " .. _MAKE.esc(MAME_DIR) .. "scripts/resources/emscripten/emscriptencompat.js",
 		"--pre-js " .. _MAKE.esc(MAME_DIR) .. "src/osd/modules/sound/js_sound.js",
 		"--post-js " .. _MAKE.esc(MAME_DIR) .. "scripts/resources/emscripten/emscripten_post.js",
 		"--embed-file " .. _MAKE.esc(MAME_DIR) .. "bgfx/chains@bgfx/chains",
