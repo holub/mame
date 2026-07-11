@@ -213,27 +213,29 @@ template<int HighBits, int Width, int AddrShift> void handler_entry_read_dispatc
 
 template<int HighBits, int Width, int AddrShift> void handler_entry_read_dispatch<HighBits, Width, AddrShift>::range_cut_before(offs_t address, int start)
 {
-	while(--start >= 0 && m_u_dispatch[start]) {
-		if(int(LowBits) > -AddrShift && m_u_dispatch[start]->is_dispatch()) {
-			static_cast<handler_entry_read_dispatch<LowBits, Width, AddrShift> *>(m_u_dispatch[start])->range_cut_before(address);
+	int cut_entry = start;
+	while(--cut_entry >= 0 && m_u_dispatch[cut_entry]) {
+		if(int(LowBits) > -AddrShift && m_u_dispatch[cut_entry]->is_dispatch()) {
+			static_cast<handler_entry_read_dispatch<LowBits, Width, AddrShift> *>(m_u_dispatch[cut_entry])->range_cut_before(address);
 			break;
 		}
-		if(m_u_ranges[start].end <= address)
+		if(m_u_ranges[cut_entry].end <= address)
 			break;
-		m_u_ranges[start].end = address;
+		m_u_ranges[cut_entry].end = address;
 	}
 }
 
 template<int HighBits, int Width, int AddrShift> void handler_entry_read_dispatch<HighBits, Width, AddrShift>::range_cut_after(offs_t address, int start)
 {
-	while(++start < COUNT && m_u_dispatch[start]) {
-		if(int(LowBits) > -AddrShift && m_u_dispatch[start]->is_dispatch()) {
-			static_cast<handler_entry_read_dispatch<LowBits, Width, AddrShift> *>(m_u_dispatch[start])->range_cut_after(address);
+	int cut_entry = start;
+	while(++cut_entry < COUNT && m_u_dispatch[cut_entry]) {
+		if(int(LowBits) > -AddrShift && m_u_dispatch[cut_entry]->is_dispatch()) {
+			static_cast<handler_entry_read_dispatch<LowBits, Width, AddrShift> *>(m_u_dispatch[cut_entry])->range_cut_after(address);
 			break;
 		}
-		if(m_u_ranges[start].start >= address)
+		if(m_u_ranges[cut_entry].start >= address)
 			break;
-		m_u_ranges[start].start = address;
+		m_u_ranges[cut_entry].start = address;
 	}
 }
 
@@ -333,6 +335,19 @@ template<int HighBits, int Width, int AddrShift> void handler_entry_read_dispatc
 {
 	offs_t hmirror = mirror & HIGHMASK;
 	offs_t lmirror = mirror & LOWMASK;
+
+	// Fast path: no mirroring at all
+	if(!mirror) {
+		populate_nomirror(start, end, ostart, oend, handler);
+		return;
+	}
+
+	// Fast path: only low mirroring, single high entry
+	if(!hmirror) {
+		offs_t base_entry = start >> LowBits;
+		populate_mirror_subdispatch(base_entry, start, end, ostart, oend, lmirror, handler);
+		return;
+	}
 
 	if(lmirror) {
 		// If lmirror is non-zero, then each mirror instance is a single entry
