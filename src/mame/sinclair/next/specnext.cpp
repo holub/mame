@@ -3690,6 +3690,15 @@ void specnext_state::machine_start()
 	state_add(5, "mmu5", m_mmu[5]).callimport();
 	state_add(6, "mmu6", m_mmu[6]).callimport();
 	state_add(7, "mmu7", m_mmu[7]).callimport();
+
+	// expose the full NextReg space (nr00-nrff) to the debugger; reads and
+	// writes go through the same reg_r()/reg_w() dispatch the 253Bh/253Bh
+	// register select/data ports use, so debugger writes trigger the real
+	// register side effects (bank switches, palette changes, resets…)
+	for (unsigned reg = 0x00; reg <= 0xff; reg++)
+		state_add<u8>(0x100 + reg, string_format("nr%02x", reg).c_str(),
+			[this, reg] () { return reg_r(reg); },
+			[this, reg] (u8 data) { reg_w(reg, data); });
 }
 
 void specnext_state::state_import(const device_state_entry &entry)
