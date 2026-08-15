@@ -3697,7 +3697,9 @@ Debugging Options
         :ref:`debugger_port <mame-commandline-debuggerport>` option to set the
         listening port and the
         :ref:`debugger_host <mame-commandline-debuggerhost>` option to set the
-        address to bind to.  Supported on all platforms with TCP socket support.
+        address to bind to.  Supported on all platforms with TCP socket
+        support.  See :ref:`debugger-gdbstub` for information on using the
+        debugger.
 
     Example:
         .. code-block:: bash
