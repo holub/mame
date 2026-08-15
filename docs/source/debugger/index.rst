@@ -54,6 +54,7 @@ name of a command, to see documentation directly in MAME.
     annotation
     cheats
     image
+    gdbstub
 
 
 .. _debugger-devicespec:
