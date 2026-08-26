@@ -229,6 +229,10 @@ protected:
 	/* Current floppy zone cache */
 	attotime m_cache_start_time, m_cache_end_time, m_cache_weak_start;
 	attotime m_amplifier_freakout_time;
+	// Read-chain bounce filter: flux changes closer than this to the
+	// previous change are ring, not signal.  Drive property - zero
+	// disables it.
+	attotime m_glitch_threshold;
 	int m_cache_index;
 	u32 m_cache_entry;
 	bool m_cache_weak;

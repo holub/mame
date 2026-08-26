@@ -291,6 +291,7 @@ floppy_image_device::floppy_image_device(const machine_config &mconfig, device_t
 	m_cyl(0),
 	m_subcyl(0),
 	m_amplifier_freakout_time(attotime::from_usec(16)),
+	m_glitch_threshold(attotime::zero),
 	m_image_dirty(false),
 	m_track_dirty(false),
 	m_writing(false),
@@ -1192,11 +1193,26 @@ attotime floppy_image_device::get_next_transition(const attotime &from_when)
 	if(!m_image || m_mon)
 		return attotime::never;
 
-	if(from_when < m_cache_start_time || m_cache_start_time.is_zero() || (!m_cache_end_time.is_never() && from_when >= m_cache_end_time))
-		cache_fill(from_when);
+	attotime from = from_when;
+	for(;;) {
+		if(from < m_cache_start_time || m_cache_start_time.is_zero() || (!m_cache_end_time.is_never() && from >= m_cache_end_time))
+			cache_fill(from);
 
-	if(!m_cache_weak)
+		if(m_cache_weak)
+			break;
+
+		// Read-chain bounce filter: a flux change that follows the
+		// previous change too closely (the cache entry spans both, so
+		// the spacing is read straight off the media) is ring, not
+		// signal - drop it and look further.  Purely a function of the
+		// media, so a replayed query sees the same stream.
+		if(!m_cache_end_time.is_never() && m_cache_end_time - m_cache_start_time < m_glitch_threshold) {
+			from = m_cache_end_time;
+			continue;
+		}
 		return m_cache_end_time;
+	}
+
 
 	// Put a flux transition in the middle of a 4us interval with a 50% probability
 	uint64_t interval_index = (from_when < m_cache_weak_start) ? 0 : (from_when - m_cache_weak_start).as_ticks(250000);
@@ -1657,6 +1673,13 @@ void floppy_35_dd::setup_characteristics()
 	m_tracks = 84;
 	m_sides = 2;
 	set_rpm(300);
+
+	// Read-chain bounce filter: changes closer than ~2.1us are ring,
+	// not signal.  Legal DD flux never comes closer than 4us, so only
+	// protection-style high-frequency zones are affected - they read
+	// back as one pulse followed by silence, like a filtering drive.
+	// The exact cutoff varies from drive to drive.
+	m_glitch_threshold = attotime::from_nsec(2100);
 
 	add_variant(floppy_image::SSSD);
 	add_variant(floppy_image::SSDD);
