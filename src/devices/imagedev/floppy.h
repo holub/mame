@@ -278,7 +278,7 @@ protected:
 	void cache_clear();
 	void cache_fill_index(const std::vector<uint32_t> &buf, int &index, attotime &base);
 	void cache_fill(const attotime &when);
-	void cache_weakness_setup();
+	void cache_weakness_setup(const std::vector<uint32_t> &buf, attotime base);
 
 	// Sound support
 	bool m_make_sound;
