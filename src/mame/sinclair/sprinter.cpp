@@ -1942,6 +1942,10 @@ INPUT_PORTS_START( sprinter )
 	PORT_BIT(0x01, IP_ACTIVE_HIGH, IPT_OTHER) PORT_NAME("TURBO") PORT_CODE(KEYCODE_F12) PORT_TOGGLE PORT_CHANGED_MEMBER(DEVICE_SELF, FUNC(sprinter_state::turbo_changed), 0)
 INPUT_PORTS_END
 
+static void no_devices(device_slot_interface &device)
+{
+}
+
 void sprinter_state::sprinter(machine_config &config)
 {
 	spectrum_128(config);
@@ -1997,10 +2001,10 @@ void sprinter_state::sprinter(machine_config &config)
 	m_maincpu->out_pb_callback().set(FUNC(sprinter_state::pio_b_w)); // joy2 ctrl
 	m_maincpu->in_pa_callback().set([this]() { return joy_ctrl_r(2); });
 
-	rs232_port_device &m_rs232(RS232_PORT(config, "rs232", default_rs232_devices, "microsoft_mouse"));
+	rs232_port_device &m_rs232(RS232_PORT(config, "rs232", no_devices, "microsoft_mouse"));
 	m_rs232.option_add("microsoft_mouse", MSFT_HLE_SERIAL_MOUSE);
-	m_rs232.option_add("logitech_mouse", LOGITECH_HLE_SERIAL_MOUSE);
-	m_rs232.option_add("wheel_mouse", WHEEL_HLE_SERIAL_MOUSE);
+	//m_rs232.option_add("logitech_mouse", LOGITECH_HLE_SERIAL_MOUSE);
+	//m_rs232.option_add("wheel_mouse", WHEEL_HLE_SERIAL_MOUSE);
 	m_rs232.rxd_handler().set(m_maincpu, FUNC(z84c015_device::rxb_w)); // MOUSE_D
 	m_maincpu->out_txdb_callback().set("rs232", FUNC(rs232_port_device::write_txd)); // TXDB
 	m_maincpu->zc_callback<0>().set(m_maincpu, FUNC(z84c015_device::rxcb_w)); // CLK_COM1
