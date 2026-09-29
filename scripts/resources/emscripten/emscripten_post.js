@@ -1,18 +1,27 @@
 // MAME-JavaScript function mappings
 var JSMAME = JSMAME || {};
-JSMAME.get_machine = Module.cwrap('_ZN15running_machine30emscripten_get_running_machineEv', 'number');
-JSMAME.get_ui = Module.cwrap('_ZN15running_machine17emscripten_get_uiEv', 'number');
-JSMAME.get_sound = Module.cwrap('_ZN15running_machine20emscripten_get_soundEv', 'number');
-JSMAME.ui_set_show_fps = Module.cwrap('_ZN15mame_ui_manager12set_show_fpsEb', '', ['number', 'number']);
-JSMAME.ui_get_show_fps = Module.cwrap('_ZNK15mame_ui_manager8show_fpsEv', 'number', ['number']);
-JSMAME.sound_manager_mute = Module.cwrap('_ZN13sound_manager4muteEbh', '', ['number', 'number', 'number']);
-JSMAME.sdl_pauseaudio = Module.cwrap('SDL_PauseAudio', '', ['number']);
-JSMAME.sdl_sendkeyboardkey = Module.cwrap('SDL_SendKeyboardKey', '', ['number', 'number']);
+JSMAME.get_machine = function () { return Module.cwrap('_ZN15running_machine30emscripten_get_running_machineEv', 'number').apply(null, arguments); };
+JSMAME.get_ui = function () { return Module.cwrap('_ZN15running_machine17emscripten_get_uiEv', 'number').apply(null, arguments); };
+JSMAME.get_sound = function () { return Module.cwrap('_ZN15running_machine20emscripten_get_soundEv', 'number').apply(null, arguments); };
+JSMAME.set_bgfx_chain = function () { return Module.cwrap('_ZN15running_machine25emscripten_set_bgfx_chainEPKc', 'number', ['string']).apply(null, arguments); };
+JSMAME.resize_window = function () { return Module.cwrap('_ZN15running_machine24emscripten_resize_windowEii', '', ['number', 'number']).apply(null, arguments); };
+JSMAME.set_keepaspect = function () { return Module.cwrap('_ZN15running_machine25emscripten_set_keepaspectEi', '', ['number']).apply(null, arguments); };
+JSMAME.set_fastforward = function () { return Module.cwrap('_ZN15running_machine26emscripten_set_fastforwardEi', '', ['number']).apply(null, arguments); };
+JSMAME.cassette_toggle = function () { return Module.cwrap('_ZN15running_machine26emscripten_cassette_toggleEv', 'number', []).apply(null, arguments); };
+JSMAME.ui_set_show_fps = function () { return Module.cwrap('_ZN15mame_ui_manager12set_show_fpsEb', '', ['number', 'number']).apply(null, arguments); };
+JSMAME.ui_get_show_fps = function () { return Module.cwrap('_ZNK15mame_ui_manager8show_fpsEv', 'number', ['number']).apply(null, arguments); };
+JSMAME.sound_manager_mute = function () { return Module.cwrap('_ZN13sound_manager4muteEbh', '', ['number', 'number', 'number']).apply(null, arguments); };
+JSMAME.sdl_pauseaudio = function () { return Module.cwrap('SDL_PauseAudio', '', ['number']).apply(null, arguments); };
+JSMAME.sdl_sendkeyboardkey = function () { return Module.cwrap('SDL_SendKeyboardKey', '', ['number', 'number']).apply(null, arguments); };
 
-JSMAME.soft_reset = Module.cwrap('_ZN15running_machine21emscripten_soft_resetEv', null);
-JSMAME.hard_reset = Module.cwrap('_ZN15running_machine21emscripten_hard_resetEv', null);
-JSMAME.exit = Module.cwrap('_ZN15running_machine15emscripten_exitEv', null, []);
-JSMAME.save = Module.cwrap('_ZN15running_machine15emscripten_saveEPKc', null, ['string']);
-JSMAME.load = Module.cwrap('_ZN15running_machine15emscripten_loadEPKc', null, ['string']);
+JSMAME.soft_reset = function () { return Module.cwrap('_ZN15running_machine21emscripten_soft_resetEv', null).apply(null, arguments); };
+JSMAME.hard_reset = function () { return Module.cwrap('_ZN15running_machine21emscripten_hard_resetEv', null).apply(null, arguments); };
+JSMAME.exit = function () { return Module.cwrap('_ZN15running_machine15emscripten_exitEv', null, []).apply(null, arguments); };
+JSMAME.save = function () { return Module.cwrap('_ZN15running_machine15emscripten_saveEPKc', null, ['string']).apply(null, arguments); };
+JSMAME.load = function () { return Module.cwrap('_ZN15running_machine15emscripten_loadEPKc', null, ['string']).apply(null, arguments); };
 
 var JSMESS = JSMAME;
+// mame.js ships wrapped in an IIFE, so publish the bridge explicitly;
+// the loader and theme call window.JSMAME.
+globalThis.JSMAME = JSMAME;
+globalThis.JSMESS = JSMAME;
