@@ -74,6 +74,12 @@ jobs:
       continue-on-error: true
       run: |
         [ -d build/generated/mame/layout ] && cd build/generated/mame/layout && touch *.lh
+    - name: Install Npcap SDK headers
+      run: |
+        curl -sSL -o npcap-sdk.zip https://npcap.com/dist/npcap-sdk-1.16.zip
+        python -m zipfile -e npcap-sdk.zip npcap-sdk
+        mkdir -p 3rdparty/winpcap
+        cp -r npcap-sdk/Include 3rdparty/winpcap/
     - name: Build
       env:
         OVERRIDE_AR: "llvm-ar"
