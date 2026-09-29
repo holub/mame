@@ -478,6 +478,19 @@ void chain_manager::set_current_chain(uint32_t screen, int32_t chain_index)
 	}
 }
 
+bool chain_manager::set_chain_by_name(uint32_t screen, std::string_view name)
+{
+	for (int32_t index = 0; index < int32_t(m_available_chains.size()); index++)
+	{
+		if (m_available_chains[index].m_name == name)
+		{
+			slider_changed(screen, nullptr, index);
+			return true;
+		}
+	}
+	return false;
+}
+
 int32_t chain_manager::slider_changed(int id, std::string *str, int32_t newval)
 {
 	if (newval != SLIDER_NOCHANGE)

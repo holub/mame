@@ -1768,6 +1768,13 @@ std::vector<ui::menu_item> renderer_bgfx::get_slider_list()
 	return sliders;
 }
 
+bool renderer_bgfx::set_effect_chain(uint32_t screen, const std::string &chain_name)
+{
+	if (m_chains)
+		return m_chains->set_chain_by_name(screen, chain_name);
+	return false;
+}
+
 void renderer_bgfx::set_sliders_dirty()
 {
 	m_sliders_dirty = true;
