@@ -86,6 +86,7 @@ jobs:
         USE_SDL3: 1
         REGENIE: 1
         PRECOMPILE: 0
+        USE_PCAP: 1
       run: make -j2
     - name: Sneaking
       run: |
