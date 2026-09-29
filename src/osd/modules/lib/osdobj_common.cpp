@@ -649,6 +649,18 @@ std::vector<ui::menu_item> osd_common_t::get_slider_list()
 	return m_sliders;
 }
 
+bool osd_common_t::set_bgfx_screen_chain(const std::string &chain_name)
+{
+	for (const auto &window : window_list())
+	{
+		if (window->has_renderer() && window->renderer().set_effect_chain(0, chain_name))
+			return true;
+	}
+
+	return false;
+}
+
+
 
 //-------------------------------------------------
 //  add_audio_to_recording - append audio samples
