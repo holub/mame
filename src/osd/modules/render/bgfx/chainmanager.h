@@ -78,6 +78,7 @@ public:
 	bgfx_chain* screen_chain(uint32_t screen);
 	std::unique_ptr<bgfx_chain> load_chain(std::string name, uint32_t screen_index);
 	bool has_applicable_chain(uint32_t screen);
+	bool set_chain_by_name(uint32_t screen, std::string_view name);
 	std::vector<ui::menu_item> get_slider_list();
 	std::vector<std::vector<float>> slider_settings();
 

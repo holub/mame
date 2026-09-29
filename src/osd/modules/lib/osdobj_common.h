@@ -229,6 +229,7 @@ public:
 	// video overridables
 	virtual void add_audio_to_recording(const int16_t *buffer, int samples_this_frame) override;
 	virtual std::vector<ui::menu_item> get_slider_list() override;
+	virtual bool set_bgfx_screen_chain(const std::string &chain_name) override;
 
 	// font interface
 	virtual osd_font::ptr font_alloc() override;
