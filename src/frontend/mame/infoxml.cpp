@@ -45,6 +45,14 @@
 #define XML_ROOT    "mame"
 #define XML_TOP     "machine"
 
+// single-threaded wasm can't spawn worker threads; run the listxml tasks
+// lazily at fetch time instead (deterministic FIFO order is preserved)
+#if defined(__EMSCRIPTEN__)
+constexpr std::launch const launch_policy = std::launch::deferred;
+#else
+constexpr std::launch const launch_policy = std::launch::async;
+#endif
+
 
 namespace {
 
@@ -543,7 +551,7 @@ void info_xml_creator::output(std::ostream &out, const std::function<bool (const
 
 			// add this task to the queue
 			active_task_count++;
-			tasks.emplace(std::async(std::launch::async, std::move(task_proc)));
+			tasks.emplace(std::async(launch_policy, std::move(task_proc)));
 		}
 
 		// we've put as many outstanding tasks out as we can; are there any tasks outstanding?
@@ -949,7 +957,7 @@ void output_devices(std::ostream &out, emu_options &lookup_options, device_type_
 
 						// add this task to the queue
 						active_task_count++;
-						tasks.emplace(std::async(std::launch::async, std::move(task_proc)));
+						tasks.emplace(std::async(launch_policy, std::move(task_proc)));
 					}
 
 					// we've put as many outstanding tasks out as we can; are there any tasks outstanding?
