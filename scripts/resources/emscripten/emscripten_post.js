@@ -25,3 +25,21 @@ var JSMESS = JSMAME;
 // the loader and theme call window.JSMAME.
 globalThis.JSMAME = JSMAME;
 globalThis.JSMESS = JSMAME;
+
+// Headless CLI support (node; see mame-node.mjs in the emame repo): the
+// launcher sets JSMAME.preload = { files: [[path, Uint8Array], ...],
+// dirs: [path, ...] } after this module evaluates but before main() runs,
+// making host paths (ROM zips, autoboot scripts, writable state dirs)
+// visible inside the emscripten filesystem.
+JSMAME.preload = null;
+Module.preRun = Module.preRun || [];
+Module.preRun.push(function () {
+	var p = JSMAME.preload;
+	if (!p)
+		return;
+	(p.dirs || []).forEach(function (d) { FS.mkdirTree(d); });
+	(p.files || []).forEach(function (f) {
+		FS.mkdirTree(f[0].substring(0, f[0].lastIndexOf("/")) || "/");
+		FS.writeFile(f[0], f[1]);
+	});
+});
