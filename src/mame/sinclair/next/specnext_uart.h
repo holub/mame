@@ -23,6 +23,7 @@ public:
 
 protected:
 	virtual void device_start() override ATTR_COLD;
+	virtual void device_reset() override ATTR_COLD;
 
 	virtual void tra_callback() override;
 	virtual void received_byte(u8 byte) override;
@@ -37,14 +38,18 @@ private:
 	u8 m_framing;
 	u8 m_prescalar_msb; // u3
 	u16 m_prescalar_lsb; // u14
-	u8 m_rx_fifo[RX_FIFO_SIZE];
+	u16 m_rx_fifo[RX_FIFO_SIZE]; // bit 8: error flag
 	u16 m_rx_head, m_rx_tail;
 	bool m_rx_empty;
 	bool m_rx_full_near; // 3/4+
+	u16 m_rx_hold;
+	bool m_rx_hold_valid;
+	bool m_rx_overflow;
 
 	u8 dat_r();
 	u8 status_reg_r();
 	void clear_rx_fifo();
+	void rx_fifo_push();
 	void update_serial();
 };
 
