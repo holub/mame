@@ -36,6 +36,7 @@
 
 #include "bus/midi/midi.h"
 #include "bus/rs232/rs232.h"
+#include "bus/rs232/esp8266_at.h"
 #include "bus/rs232/null_modem.h"
 #include "bus/rs232/pty.h"
 #include "bus/spectrum/zxbus/bus.h"
@@ -133,6 +134,7 @@ public:
 		, m_dma(*this, "dma")
 		, m_i2c(*this, "i2c")
 		, m_uart(*this, "uart%u", 0U)
+		, m_rs232_esp(*this, "rs232_esp")
 		, m_midi_out(*this, "mdout")
 		, m_sdcards(*this, "sdcard%u", 0U)
 		, m_ay(*this, "ay%u", 0U)
@@ -381,6 +383,8 @@ private:
 	required_device<specnext_dma_device> m_dma;
 	optional_device<i2c_ds1307_device> m_i2c;
 	optional_device_array<specnext_uart_device, 2> m_uart;
+	optional_device<rs232_port_device> m_rs232_esp;
+	device_esp8266_rst_interface *m_esp_rst = nullptr;
 	optional_device<midi_port_device> m_midi_out;
 	required_device_array<spi_sdcard_device, 2> m_sdcards;
 	required_device_array<ym2149_device, 3> m_ay;
@@ -2691,6 +2695,8 @@ void specnext_state::reg_w(offs_t nr_wr_reg, u8 nr_wr_dat)
 void specnext_state::nr_02_w(u8 nr_wr_dat)
 {
 	m_nr_02_bus_reset = BIT(nr_wr_dat, 7);
+	if (m_esp_rst)
+		m_esp_rst->rst_w(m_nr_02_bus_reset ? ASSERT_LINE : CLEAR_LINE);
 	if (BIT(~nr_wr_dat, 4))
 		m_nr_da_iotrap_cause = 0;
 
@@ -3447,6 +3453,9 @@ void specnext_state::machine_start()
 		m_ram->pointer()[addr] = machine().rand();
 
 	m_ram_pages = m_ram->size() / 0x2000;
+
+	if (m_rs232_esp)
+		m_esp_rst = dynamic_cast<device_esp8266_rst_interface *>(m_rs232_esp->get_card_device());
 	for (auto i = 0; i < 8; i++)
 		m_bank_ram[i]->configure_entries(0, m_ram->size() / 0x2000, m_ram->pointer(), 0x2000);
 	m_bank_boot_rom->configure_entries(0, 2, memregion("maincpu")->base(), 0x2000);
@@ -3843,6 +3852,9 @@ void specnext_state::machine_reset()
 	if (m_nr_02_hard_reset)
 		reset_hard();
 
+	if (m_esp_rst && m_nr_02_bus_reset)
+		m_esp_rst->rst_w(ASSERT_LINE);
+
 	// FPGA ym2149.vhd resets R07 to 0xFF (all tone/noise disabled); ay8910_reset_ym sets 0x00.
 	for (auto &ay : m_ay)
 	{
@@ -4144,6 +4156,7 @@ DEVICE_INPUT_DEFAULTS_END
 
 static void rs232_devices(device_slot_interface &device)
 {
+	device.option_add("esp8266_at", ESP8266_AT);
 	device.option_add("null_modem", NULL_MODEM);
 	device.option_add("pty",        PSEUDO_TERMINAL);
 }
@@ -4202,7 +4215,7 @@ void specnext_state::tbblue(machine_config &config)
 	m_uart[0]->out_txd_callback().append(FUNC(specnext_state::txd_w<0>));
 	m_uart[0]->out_rx_full_near_callback().set(m_im2_uart0_rx, FUNC(specnext_im2_device::irq_w));
 	m_uart[0]->out_tx_empty_callback().set(m_im2_uart0_tx, FUNC(specnext_im2_device::irq_w));
-	rs232_port_device &rs232_esp(RS232_PORT(config, "rs232_esp", rs232_devices, nullptr));
+	rs232_port_device &rs232_esp(RS232_PORT(config, "rs232_esp", rs232_devices, "esp8266_at"));
 	rs232_esp.rxd_handler().set(m_uart[0], FUNC(specnext_uart_device::rx_w));
 	rs232_esp.set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(rs232_baud));
 	rs232_esp.set_option_device_input_defaults("pty", DEVICE_INPUT_DEFAULTS_NAME(rs232_baud));

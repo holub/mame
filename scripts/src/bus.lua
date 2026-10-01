@@ -5034,6 +5034,8 @@ if BUSES["RS232"] then
 		MAME_DIR .. "src/devices/bus/rs232/adsp2181ekl.h",
 		MAME_DIR .. "src/devices/bus/rs232/auto3a.cpp",
 		MAME_DIR .. "src/devices/bus/rs232/auto3a.h",
+		MAME_DIR .. "src/devices/bus/rs232/esp8266_at.cpp",
+		MAME_DIR .. "src/devices/bus/rs232/esp8266_at.h",
 		MAME_DIR .. "src/devices/bus/rs232/exorterm.cpp",
 		MAME_DIR .. "src/devices/bus/rs232/exorterm.h",
 		MAME_DIR .. "src/devices/bus/rs232/heath_h19.cpp",
