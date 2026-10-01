@@ -10,12 +10,14 @@
 
 #define LOG_DAT_OUT (1U << 1)
 #define LOG_DAT_IN  (1U << 2)
+#define LOG_RX_OVR  (1U << 3)
 
-//#define VERBOSE ( LOG_DAT_OUT | LOG_DAT_IN | LOG_GENERAL )
+//#define VERBOSE ( LOG_DAT_OUT | LOG_DAT_IN | LOG_RX_OVR | LOG_GENERAL )
 #include "logmacro.h"
 
 #define LOGDOUT(...) LOGMASKED(LOG_DAT_OUT, __VA_ARGS__)
 #define LOGDIN(...)  LOGMASKED(LOG_DAT_IN,  __VA_ARGS__)
+#define LOGOVR(...)  LOGMASKED(LOG_RX_OVR,  __VA_ARGS__)
 
 
 DEFINE_DEVICE_TYPE(SPECNEXT_UART, specnext_uart_device, "specnext_uart", "Spectrum Next UART")
@@ -29,6 +31,9 @@ specnext_uart_device::specnext_uart_device(const machine_config &mconfig, const 
 	, m_rx_head(0), m_rx_tail(0)
 	, m_rx_empty(true)
 	, m_rx_full_near(false)
+	, m_rx_hold(0)
+	, m_rx_hold_valid(false)
+	, m_rx_overflow(false)
 {
 }
 
@@ -41,9 +46,30 @@ void specnext_uart_device::tra_callback()
 
 void specnext_uart_device::received_byte(u8 byte)
 {
-	m_rx_fifo[m_rx_tail] = byte;
+	if (BIT(m_framing, 7))
+		return;
+
+	if (m_rx_hold_valid)
+	{
+		m_rx_overflow = true;
+		LOGOVR("RX overflow, dropped %02x\n", byte);
+		return;
+	}
+
+	m_rx_hold = (m_rx_overflow << 8) | byte;
+	m_rx_hold_valid = true;
+	rx_fifo_push();
+}
+
+void specnext_uart_device::rx_fifo_push()
+{
+	if (!m_rx_hold_valid || (!m_rx_empty && (m_rx_head == m_rx_tail)))
+		return;
+
+	m_rx_fifo[m_rx_tail] = m_rx_hold;
 	m_rx_tail = (m_rx_tail + 1) % RX_FIFO_SIZE;
 	m_rx_empty = false;
+	m_rx_hold_valid = false;
 
 	if (!m_rx_full_near)
 	{
@@ -59,12 +85,13 @@ u8 specnext_uart_device::dat_r()
 
 	if (!m_rx_empty)
 	{
-		data = m_rx_fifo[m_rx_head];
+		data = m_rx_fifo[m_rx_head] & 0xff;
 		if (!machine().side_effects_disabled())
 		{
 			m_rx_head = (m_rx_head + 1) % RX_FIFO_SIZE;
 			m_rx_empty = (m_rx_head == m_rx_tail) ? true : false;
 			m_rx_full_near = ((m_rx_tail + RX_FIFO_SIZE - m_rx_head) % RX_FIFO_SIZE) >= (RX_FIFO_SIZE * 3 / 4);
+			rx_fifo_push();
 		}
 		LOGDIN("DR = %02x(%c)\n", data, data >= 0x20 ? data : '?');
 	}
@@ -78,12 +105,16 @@ u8 specnext_uart_device::status_reg_r()
 	//o_cpu_d <= uart0_status_rx_err_break & uart0_status_rx_err_framing & (uart0_rx_o(8) and uart0_status_rx_avail) & uart0_status_tx_empty &
 	//          uart0_status_rx_near_full & uart0_status_rx_err_overflow & uart0_status_tx_full & uart0_status_rx_avail;
 
-	const bool rx_overflow = !m_rx_empty && (m_rx_head == m_rx_tail);
-	const u8 status = (fifo_empty() << 4)
+	const bool rx_err = !m_rx_empty && BIT(m_rx_fifo[m_rx_head], 8);
+	const u8 status = (rx_err << 5)
+			| (fifo_empty() << 4)
 			| (m_rx_full_near << 3)
-			| (rx_overflow << 2)
+			| (m_rx_overflow << 2)
 			| (fifo_full() << 1)
 			| (!m_rx_empty << 0);
+
+	if (!machine().side_effects_disabled())
+		m_rx_overflow = false;
 
 	return status;
 }
@@ -143,6 +174,8 @@ void specnext_uart_device::clear_rx_fifo()
 	m_rx_head = m_rx_tail = 0;
 	m_rx_empty = true;
 	m_rx_full_near = false;
+	m_rx_hold_valid = false;
+	m_rx_overflow = false;
 }
 
 void specnext_uart_device::update_serial()
@@ -179,4 +212,13 @@ void specnext_uart_device::device_start()
 	save_item(NAME(m_rx_tail));
 	save_item(NAME(m_rx_empty));
 	save_item(NAME(m_rx_full_near));
+	save_item(NAME(m_rx_hold));
+	save_item(NAME(m_rx_hold_valid));
+	save_item(NAME(m_rx_overflow));
+}
+
+void specnext_uart_device::device_reset()
+{
+	clear_fifo();
+	clear_rx_fifo();
 }
