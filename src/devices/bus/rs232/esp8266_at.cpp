@@ -2,7 +2,8 @@
 // copyright-holders:D. Rimron-Soutter
 /***************************************************************************
 
-    ESP8266 module running Espressif's AT 0.40.0.0 or 1.1.0.0 firmware
+    ESP8266 module running Espressif's AT 0.21.0.0, 0.40.0.0 or 1.1.0.0
+    firmware
 
     High-level emulation of the AT command interface.  Links are TCP and
     UDP sockets on the host; there is no WiFi radio.
@@ -49,7 +50,6 @@ namespace {
 
 constexpr unsigned LINK_COUNT = 5;
 constexpr unsigned MAX_SEND = 2048;
-constexpr unsigned PASSTHROUGH_PACKET = 2'920;
 constexpr unsigned MAX_LINE = 128;
 constexpr unsigned OUT_HIGH_WATER = 1024;
 constexpr unsigned CONNECT_TIMEOUT_MS = 10'000;
@@ -61,6 +61,9 @@ constexpr unsigned BOOT_DELAY_MS = 300;
 
 constexpr unsigned ESP_TCP_MSS = 1460;
 constexpr unsigned ESP_TCP_TMR_MS = 125;
+constexpr unsigned TCP_FIN_WAIT_MS = 20'000;
+constexpr unsigned UART_FIFO = 128;
+constexpr unsigned PASSTHROUGH_ACK_MS = 28;
 
 constexpr char const STATION_MAC[] = "1a:fe:34:00:00:01";
 
@@ -107,10 +110,75 @@ struct esp8266_firmware
 	bool translink_names;
 	bool drop_tcp_any_mode;
 	bool udp_restore;
+	unsigned passthrough_packet = 2'920;
+	unsigned reconnect_step_us = 0;
+	char const *link_type_error = "Link type ERROR\r\n";
+	char const *unlink_text = "UNLINK\r\n";
+	bool cwlap_five = false;
+	bool quiet_wifi = false;
+	bool status_commands = false;
+	bool ap_ssid_only = false;
+	bool cipsta_ip_only = false;
+	bool cipstart_checks = false;
+	bool udp_connect_id = false;
+	bool send_checks = false;
+	bool send_echo = false;
+	bool send_busy_only = false;
+	bool udp_ipd_ok = false;
+	bool cipmode_stored = false;
+	bool cipappup = false;
+	bool close_waits = false;
+	bool ring_passthrough_only = false;
+	bool uart_stall = false;
+	bool cipsto_fault = false;
 };
 
+constexpr char const *const AT021_ABSENT[] = {
+		"SLEEP", "UART_CUR", "UART_DEF", "CWMODE_CUR", "CWMODE_DEF", "CWJAP_CUR", "CWJAP_DEF", "CWDHCP_CUR", "CWDHCP_DEF",
+		"CIPSTA_CUR", "CIPSTA_DEF", "CIPSENDEX", "CIPDINFO", "CIPALIVE", "CIPBUFRESET", "CIPSENDBUF", "CIPCHECKSEQ",
+		"CIPCHECKQUEUE", "CIPBUFSTATUS", "SAVETRANSLINK", "CIPSSLSIZE", "CIPDOMAIN", nullptr };
 constexpr char const *const AT040_ABSENT[] = { "CIPSSLSIZE", "CIPDOMAIN", nullptr };
 constexpr char const *const AT11_ABSENT[] = { nullptr };
+
+constexpr esp8266_firmware FIRMWARE_021 = {
+		.boot_text = "\r\nStale Pixels ESP8266 AT emulation, AT 0.21.0.0\r\n",
+		.gmr_text =
+				"AT version:0.21.0.0\r\n"
+				"SDK version:0.9.5\r\n"
+				"\r\n",
+		.absent = AT021_ABSENT,
+		.tcp_wnd = 4 * ESP_TCP_MSS,
+		.tx_ring = 8'192,
+		.block_free = 6'144,
+		.recover_free = 7'999,
+		.nv_offset = 2 * NV_BLOCK,
+		.cwlap_cal = false,
+		.status_tcp_local = false,
+		.bufstatus_id = false,
+		.translink_names = false,
+		.drop_tcp_any_mode = false,
+		.udp_restore = true,
+		.passthrough_packet = MAX_SEND,
+		.reconnect_step_us = 10'000,
+		.link_type_error = "Link typ ERROR\r\n",
+		.unlink_text = "link is not\r\n",
+		.cwlap_five = true,
+		.quiet_wifi = true,
+		.status_commands = true,
+		.ap_ssid_only = true,
+		.cipsta_ip_only = true,
+		.cipstart_checks = true,
+		.udp_connect_id = true,
+		.send_checks = true,
+		.send_echo = true,
+		.send_busy_only = true,
+		.udp_ipd_ok = true,
+		.cipmode_stored = true,
+		.cipappup = true,
+		.close_waits = true,
+		.ring_passthrough_only = true,
+		.uart_stall = true,
+		.cipsto_fault = true };
 
 constexpr esp8266_firmware FIRMWARE_040 = {
 		"\r\nStale Pixels ESP8266 AT emulation, AT 0.40.0.0\r\n",
@@ -263,7 +331,24 @@ public:
 				[this, link, generation] ()
 				{
 					net_link const &l = *m_links[link];
-					if ((l.generation == generation) && l.connected)
+					if ((l.generation == generation) && l.connected && !l.reading)
+						start_read(link, generation);
+				});
+	}
+
+	void shutdown(unsigned link, u32 generation)
+	{
+		asio::post(
+				m_ioctx,
+				[this, link, generation] ()
+				{
+					net_link &l = *m_links[link];
+					if ((l.generation != generation) || !l.connected || l.is_udp)
+						return;
+					std::error_code err;
+					l.tcp.shutdown(asio::ip::tcp::socket::shutdown_send, err);
+					l.closing = true;
+					if (!l.reading)
 						start_read(link, generation);
 				});
 	}
@@ -393,6 +478,8 @@ private:
 		bool is_udp = false;
 		bool connected = false;
 		bool writing = false;
+		bool reading = false;
+		bool closing = false;
 		u8 udp_mode = 0;
 		bool udp_peer_changed = false;
 		asio::ip::tcp::endpoint peer;
@@ -576,6 +663,8 @@ private:
 			l.udp.close(err);
 		l.connected = false;
 		l.writing = false;
+		l.reading = false;
+		l.closing = false;
 		l.send_queue.clear();
 	}
 
@@ -699,12 +788,20 @@ private:
 	void start_read(unsigned link, u32 generation)
 	{
 		net_link &l = *m_links[link];
+		l.reading = true;
 		auto const handler =
 				[this, link, generation] (std::error_code const &err, std::size_t length)
 				{
 					if (!current(link, generation))
 						return;
 					net_link &l = *m_links[link];
+					l.reading = false;
+					if (l.closing)
+					{
+						close_sockets(l);
+						post_event(event_type::CLOSED, link, generation);
+						return;
+					}
 					if (l.is_udp && (err == asio::error::connection_refused))
 					{
 						start_read(link, generation);
@@ -845,7 +942,15 @@ private:
 		MODE_PING,
 		MODE_SCAN,
 		MODE_DOMAIN,
-		MODE_SEND_RESOLVE
+		MODE_SEND_RESOLVE,
+		MODE_CLOSING
+	};
+
+	enum : u8
+	{
+		CLOSE_NONE,
+		CLOSE_WAIT,
+		CLOSE_DONE
 	};
 
 	enum : u8
@@ -864,7 +969,8 @@ private:
 	enum : u8
 	{
 		FIRMWARE_AT040 = 1,
-		FIRMWARE_AT11 = 2
+		FIRMWARE_AT11 = 2,
+		FIRMWARE_AT021 = 3
 	};
 
 	enum : u8
@@ -913,6 +1019,8 @@ private:
 	TIMER_CALLBACK_MEMBER(join_tick);
 	TIMER_CALLBACK_MEMBER(ping_done);
 	TIMER_CALLBACK_MEMBER(domain_done);
+	TIMER_CALLBACK_MEMBER(close_tick);
+	TIMER_CALLBACK_MEMBER(uart_resume);
 
 	void command_byte(u8 byte);
 	void send_byte(u8 byte);
@@ -921,7 +1029,7 @@ private:
 	void force_restart();
 	void execute(std::string const &line);
 	void cmd_cipstart(std::vector<at_arg> const &args);
-	void cmd_cipsend(std::string_view const *text, u8 kind);
+	void cmd_cipsend(std::string_view const *text, u8 kind, bool equals = true);
 	void cmd_cipclose(std::vector<at_arg> const *args);
 	void cmd_cipserver(std::vector<at_arg> const &args);
 	void cmd_uart(std::vector<at_arg> const &args, bool def);
@@ -949,6 +1057,11 @@ private:
 	bool link_number(std::string_view &p, unsigned &link);
 	void restart();
 	void boot_done();
+	void store_cipmode();
+	unsigned reconnect_delay();
+	bool close_wait(unsigned link);
+	void stop_waits();
+	void passthrough_byte(u8 byte);
 
 	void reply(std::string_view text);
 	void reply_ok() { reply("\r\nOK\r\n"); }
@@ -977,6 +1090,8 @@ private:
 	bool ring_service();
 	unsigned ring_used();
 	void ring_block(unsigned link);
+	bool ring_direct(unsigned link) const { return m_fw->ring_passthrough_only && ((m_mode != MODE_PASSTHROUGH) || link); }
+	bool ring_fits(unsigned link, std::size_t length);
 	bool ring_stalled() const { return m_fw->block_free && !m_ring_wait.empty(); }
 
 	void process_events();
@@ -1017,6 +1132,8 @@ private:
 	emu_timer *m_join_timer;
 	emu_timer *m_ping_timer;
 	emu_timer *m_domain_timer;
+	emu_timer *m_close_timer;
+	emu_timer *m_stall_timer;
 
 	u8 m_echo;
 	u8 m_mux;
@@ -1115,6 +1232,11 @@ private:
 	bool m_translink_stored;
 	std::vector<u8> m_nv_other;
 	std::string m_link_home[LINK_COUNT];
+	u8 m_link_closing[LINK_COUNT];
+	attotime m_close_start;
+	u8 m_reconnects;
+	bool m_uart_stalled;
+	std::vector<u8> m_uart_fifo;
 	esp8266_firmware const *m_fw;
 };
 
@@ -1124,6 +1246,7 @@ ROM_START(esp8266_at)
 	ROM_DEFAULT_BIOS("at11")
 	ROM_SYSTEM_BIOS(0, "at040", "AT 0.40.0.0")
 	ROM_SYSTEM_BIOS(1, "at11", "AT 1.1.0.0")
+	ROM_SYSTEM_BIOS(2, "at021", "AT 0.21.0.0")
 ROM_END
 
 
@@ -1158,6 +1281,8 @@ esp8266_at_device::esp8266_at_device(machine_config const &mconfig, char const *
 	, m_join_timer(nullptr)
 	, m_ping_timer(nullptr)
 	, m_domain_timer(nullptr)
+	, m_close_timer(nullptr)
+	, m_stall_timer(nullptr)
 	, m_echo(1)
 	, m_mux(0)
 	, m_cipmode(0)
@@ -1235,6 +1360,9 @@ esp8266_at_device::esp8266_at_device(machine_config const &mconfig, char const *
 	, m_tl_keepalive(0)
 	, m_tl_host{ 0 }
 	, m_translink_stored(false)
+	, m_link_closing{ CLOSE_NONE, CLOSE_NONE, CLOSE_NONE, CLOSE_NONE, CLOSE_NONE }
+	, m_reconnects(0)
+	, m_uart_stalled(false)
 	, m_fw(&FIRMWARE_11)
 {
 }
@@ -1254,7 +1382,18 @@ ioport_constructor esp8266_at_device::device_input_ports() const
 
 void esp8266_at_device::device_start()
 {
-	m_fw = (system_bios() == FIRMWARE_AT040) ? &FIRMWARE_040 : &FIRMWARE_11;
+	switch (system_bios())
+	{
+	case FIRMWARE_AT040:
+		m_fw = &FIRMWARE_040;
+		break;
+	case FIRMWARE_AT021:
+		m_fw = &FIRMWARE_021;
+		break;
+	default:
+		m_fw = &FIRMWARE_11;
+		break;
+	}
 
 	m_poll_timer = timer_alloc(FUNC(esp8266_at_device::poll_network), this);
 	m_passthrough_timer = timer_alloc(FUNC(esp8266_at_device::passthrough_flush), this);
@@ -1264,6 +1403,8 @@ void esp8266_at_device::device_start()
 	m_join_timer = timer_alloc(FUNC(esp8266_at_device::join_tick), this);
 	m_ping_timer = timer_alloc(FUNC(esp8266_at_device::ping_done), this);
 	m_domain_timer = timer_alloc(FUNC(esp8266_at_device::domain_done), this);
+	m_close_timer = timer_alloc(FUNC(esp8266_at_device::close_tick), this);
+	m_stall_timer = timer_alloc(FUNC(esp8266_at_device::uart_resume), this);
 
 	m_net = std::make_unique<esp8266_net>();
 
@@ -1305,6 +1446,7 @@ void esp8266_at_device::device_stop()
 
 void esp8266_at_device::device_reset()
 {
+	stop_waits();
 	close_all_links();
 	server_close();
 	m_events.clear();
@@ -1334,6 +1476,7 @@ void esp8266_at_device::device_reset()
 
 void esp8266_at_device::device_post_load()
 {
+	stop_waits();
 	for (unsigned i = 0; i < LINK_COUNT; i++)
 	{
 		m_link_generation[i]++;
@@ -1407,36 +1550,29 @@ void esp8266_at_device::nvram_default()
 
 bool esp8266_at_device::nvram_read(util::read_stream &file)
 {
-	// 0-129: the AT 1.1.0.0 block; 130-259: the AT 0.40.0.0 block, present once 0.40 has
-	// stored a setting. Each version keeps the other's block as it is. A block:
+	// 0-129: the AT 1.1.0.0 block; 130-259: the AT 0.40.0.0 block; 260-389: the AT 0.21.0.0
+	// block. A later block is present once its version has stored a setting, with any block
+	// before it padded. Each version keeps the others' blocks as they are. A block:
 	// 0-7: AT+UART_DEF rate as 32-bit little-endian, then the four AT+UART_DEF framing values
 	// 8: 0 when nothing follows 9, 1 when the WiFi settings follow, 2 when the AT+SAVETRANSLINK
 	// settings follow them
 	// 9: bit 0 set when 0-7 are stored
 	// 10: AT+CWMODE_DEF, 11: AT+CWDHCP_DEF, 12: 1 when 13-24 hold an AT+CIPSTA_DEF
 	// address, gateway and netmask, 25-57: AT+CWJAP_DEF SSID, NUL-terminated
-	// 58: AT+SAVETRANSLINK mode, 59: link type (0 TCP, 1 UDP, 2 SSL), 60-61: remote port,
+	// 58: AT+SAVETRANSLINK mode (0.21: AT+CIPMODE), 59: link type (0 TCP, 1 UDP, 2 SSL), 60-61: remote port,
 	// 62-63: UDP local port, 64-65: TCP keep-alive, all 16-bit little-endian,
 	// 66-129: remote host, NUL-terminated
 	// The 1.1 block alone may be cut after 8 bytes (AT+UART_DEF alone) or 58 (no AT+SAVETRANSLINK).
-	u8 buf[2 * NV_BLOCK];
+	u8 buf[3 * NV_BLOCK];
 	auto const [err, actual] = util::read(file, buf, sizeof(buf));
-	if (err || ((actual != 8) && (actual != 58) && (actual != NV_BLOCK) && (actual != sizeof(buf))))
+	if (err || ((actual != 8) && (actual != 58) && (actual != NV_BLOCK) && (actual != (2 * NV_BLOCK)) && (actual != sizeof(buf))))
 		return false;
 
-	std::size_t const first = std::min<std::size_t>(actual, NV_BLOCK);
-	if (m_fw->nv_offset)
-	{
-		if (!nv_parse(&buf[first], actual - first))
-			return false;
-		m_nv_other.assign(&buf[0], &buf[first]);
-	}
-	else
-	{
-		if (!nv_parse(buf, first))
-			return false;
-		m_nv_other.assign(&buf[first], &buf[actual]);
-	}
+	std::size_t const offset = m_fw->nv_offset;
+	std::size_t const length = offset ? ((actual > offset) ? NV_BLOCK : 0) : std::min<std::size_t>(actual, NV_BLOCK);
+	if (!nv_parse(&buf[offset], length))
+		return false;
+	m_nv_other.assign(&buf[0], &buf[actual]);
 	return true;
 }
 
@@ -1491,16 +1627,17 @@ bool esp8266_at_device::nv_parse(u8 const *buf, std::size_t length)
 
 bool esp8266_at_device::nvram_write(util::write_stream &file)
 {
-	u8 buf[2 * NV_BLOCK];
+	u8 buf[3 * NV_BLOCK];
 	std::fill(std::begin(buf), std::end(buf), 0);
-	std::size_t length = nv_build(&buf[m_fw->nv_offset]);
-	if (m_fw->nv_offset || !m_nv_other.empty())
+	std::copy(m_nv_other.begin(), m_nv_other.end(), std::begin(buf));
+	std::size_t const offset = m_fw->nv_offset;
+	std::fill_n(&buf[offset], NV_BLOCK, 0);
+	std::size_t length = nv_build(&buf[offset]);
+	if (offset || (m_nv_other.size() > NV_BLOCK))
 	{
-		std::size_t const other = m_fw->nv_offset ? 0 : NV_BLOCK;
-		std::copy(m_nv_other.begin(), m_nv_other.end(), &buf[other]);
-		if (m_nv_other.size() == 8)
-			buf[other + 9] = 1;
-		length = NV_BLOCK + (m_fw->nv_offset ? NV_BLOCK : m_nv_other.size());
+		if (offset && (m_nv_other.size() == 8))
+			buf[9] = 1;
+		length = std::max<std::size_t>(offset + NV_BLOCK, m_nv_other.size());
 	}
 	auto const [err, actual] = util::write(file, buf, length);
 	return !err;
@@ -1570,7 +1707,7 @@ void esp8266_at_device::set_defaults()
 	std::copy(std::begin(m_sta_ip_def), std::end(m_sta_ip_def), std::begin(m_sta_ip));
 	std::copy(std::begin(m_ssid_def), std::end(m_ssid_def), std::begin(m_ssid));
 	m_joined = (m_cwmode != 2) && m_ssid[0];
-	m_status = m_joined ? STATUS_GOT_IP : STATUS_NO_WIFI;
+	m_status = m_fw->status_commands ? STATUS_DISCONNECTED : m_joined ? STATUS_GOT_IP : STATUS_NO_WIFI;
 }
 
 
@@ -1613,6 +1750,8 @@ void esp8266_at_device::station_off()
 		return;
 	m_joined = 0;
 	LOGLINK("station disconnected\n");
+	if (m_fw->quiet_wifi)
+		return;
 	reply("WIFI DISCONNECT\r\n");
 	if ((m_cwmode != 1) && !m_fw->drop_tcp_any_mode)
 		return;
@@ -1662,6 +1801,7 @@ void esp8266_at_device::rst_w(int state)
 	if (m_rst)
 	{
 		LOGLINK("reset pin asserted\n");
+		stop_waits();
 		close_all_links();
 		server_close();
 		m_events.clear();
@@ -1814,9 +1954,10 @@ unsigned esp8266_at_device::ring_used()
 
 void esp8266_at_device::ring_enqueue(unsigned link, std::vector<u8> &&text)
 {
-	if (m_ring_wait.empty() && ((m_fw->tx_ring - ring_used()) >= text.size()))
+	if (m_ring_wait.empty() && ring_fits(link, text.size()))
 	{
-		m_ring_chunks.emplace_back(m_out_pushed, m_out_pushed + text.size());
+		if (!ring_direct(link))
+			m_ring_chunks.emplace_back(m_out_pushed, m_out_pushed + text.size());
 		out_push(text.data(), text.size());
 		ring_block(link);
 		return;
@@ -1836,12 +1977,13 @@ void esp8266_at_device::ring_enqueue(unsigned link, std::vector<u8> &&text)
 bool esp8266_at_device::ring_service()
 {
 	bool moved = false;
-	while (!m_ring_wait.empty() && ((m_fw->tx_ring - ring_used()) >= m_ring_wait.front().second.size()))
+	while (!m_ring_wait.empty() && ring_fits(m_ring_wait.front().first, m_ring_wait.front().second.size()))
 	{
 		unsigned const link = m_ring_wait.front().first;
 		std::vector<u8> const text = std::move(m_ring_wait.front().second);
 		m_ring_wait.pop_front();
-		m_ring_chunks.emplace_back(m_out_pushed, m_out_pushed + text.size());
+		if (!ring_direct(link))
+			m_ring_chunks.emplace_back(m_out_pushed, m_out_pushed + text.size());
 		out_push(text.data(), text.size());
 		ring_block(link);
 		moved = true;
@@ -1872,6 +2014,14 @@ bool esp8266_at_device::ring_service()
 		moved = true;
 	}
 	return moved;
+}
+
+
+bool esp8266_at_device::ring_fits(unsigned link, std::size_t length)
+{
+	if (ring_direct(link))
+		return m_out.size() <= UART_FIFO;
+	return (m_fw->tx_ring - ring_used()) >= length;
 }
 
 
@@ -2007,7 +2157,7 @@ void esp8266_at_device::tcp_deliver(unsigned link)
 		m_link_paused[link] = false;
 		if ((m_mode == MODE_PASSTHROUGH) && !link)
 		{
-			link_open(link, RECONNECT_DELAY_MS);
+			link_open(link, reconnect_delay());
 		}
 		else
 		{
@@ -2099,7 +2249,7 @@ void esp8266_at_device::received_byte(u8 byte)
 		break;
 
 	case MODE_SEND_DATA:
-		if (m_send_plus || ((m_batch_count == 1) && (byte == '+')))
+		if (!m_fw->send_busy_only && (m_send_plus || ((m_batch_count == 1) && (byte == '+'))))
 		{
 			if ((byte == '+') && (m_send_plus < 3))
 			{
@@ -2119,11 +2269,7 @@ void esp8266_at_device::received_byte(u8 byte)
 		break;
 
 	case MODE_PASSTHROUGH:
-		m_passthrough_buf.push_back(byte);
-		if (m_passthrough_buf.size() >= PASSTHROUGH_PACKET)
-			passthrough_flush(0);
-		else
-			m_passthrough_timer->adjust(attotime::from_msec(RX_BATCH_GAP_MS));
+		passthrough_byte(byte);
 		break;
 
 	default:
@@ -2133,8 +2279,39 @@ void esp8266_at_device::received_byte(u8 byte)
 }
 
 
+void esp8266_at_device::passthrough_byte(u8 byte)
+{
+	if (m_uart_stalled)
+	{
+		if (m_uart_fifo.size() < UART_FIFO)
+			m_uart_fifo.push_back(byte);
+		return;
+	}
+	m_passthrough_buf.push_back(byte);
+	if (m_passthrough_buf.size() >= m_fw->passthrough_packet)
+		passthrough_flush(0);
+	else
+		m_passthrough_timer->adjust(attotime::from_msec(RX_BATCH_GAP_MS));
+}
+
+
+TIMER_CALLBACK_MEMBER(esp8266_at_device::uart_resume)
+{
+	m_uart_stalled = false;
+	std::vector<u8> const fifo = std::move(m_uart_fifo);
+	m_uart_fifo.clear();
+	for (u8 const byte : fifo)
+	{
+		if (m_mode == MODE_PASSTHROUGH)
+			passthrough_byte(byte);
+	}
+}
+
+
 void esp8266_at_device::send_byte(u8 byte)
 {
+	if (m_fw->send_echo && m_echo && (byte != '\n'))
+		send_raw(&byte, 1);
 	m_send_count++;
 	if (!m_send_ex)
 	{
@@ -2241,7 +2418,11 @@ void esp8266_at_device::command_byte(u8 byte)
 		m_rst_match = ((m_rst_match < 8) && (byte == u8(force[m_rst_match]))) ? (m_rst_match + 1) : 0;
 		if (byte != '\n')
 			return;
-		if (m_mode == MODE_SEND_WAIT)
+		if ((m_mode == MODE_SEND_WAIT) && m_fw->send_busy_only)
+		{
+			reply("busy s...\r\n");
+		}
+		else if (m_mode == MODE_SEND_WAIT)
 		{
 			if ((m_rst_match == 8) && (m_batch_count == 8))
 			{
@@ -2426,6 +2607,8 @@ void esp8266_at_device::execute(std::string const &line)
 	}
 	else if (exec && (name == "CIFSR"))
 	{
+		if (m_fw->status_commands)
+			m_status = STATUS_GOT_IP;
 		if (m_cwmode != 2)
 			reply(util::string_format("+CIFSR:STAIP,\"%s\"\r\n+CIFSR:STAMAC,\"%s\"\r\n", station_ip(), STATION_MAC));
 		reply_ok();
@@ -2489,6 +2672,8 @@ void esp8266_at_device::execute(std::string const &line)
 		else if (set && (args.size() == 1) && ((args[0].text == "0") || (args[0].text == "1")) && !args[0].quoted)
 		{
 			m_cipmode = args[0].text[0] - '0';
+			if (m_fw->cipmode_stored)
+				store_cipmode();
 			reply_ok();
 		}
 		else
@@ -2502,7 +2687,7 @@ void esp8266_at_device::execute(std::string const &line)
 	}
 	else if ((exec || set) && (name == "CIPSEND"))
 	{
-		cmd_cipsend(set ? &text : nullptr, SEND_PLAIN);
+		cmd_cipsend(set ? &text : nullptr, SEND_PLAIN, !set || (rest[pos] == '='));
 	}
 	else if (set && (name == "CIPSENDEX"))
 	{
@@ -2654,6 +2839,12 @@ void esp8266_at_device::execute(std::string const &line)
 			{
 				reply_error();
 			}
+			else if (m_fw->ap_ssid_only)
+			{
+				m_status = STATUS_GOT_IP;
+				reply(util::string_format("%s:\"%s\"\r\n", shown, ssid));
+				reply_ok();
+			}
 			else
 			{
 				reply(util::string_format("%s:\"%s\",\"%s\",%d,%d\r\n", shown, ssid, AP_BSSID, AP_CHANNEL, AP_RSSI));
@@ -2686,6 +2877,8 @@ void esp8266_at_device::execute(std::string const &line)
 		{
 			reply_ok();
 			station_off();
+			if (m_fw->status_commands)
+				m_status = STATUS_NO_WIFI;
 		}
 		else
 		{
@@ -2724,9 +2917,12 @@ void esp8266_at_device::execute(std::string const &line)
 			{
 				station_info(info);
 			}
-			reply(util::string_format(
-					"%1$s:ip:\"%2$s\"\r\n%1$s:gateway:\"%3$s\"\r\n%1$s:netmask:\"%4$s\"\r\n",
-					shown, ip_text(&info[0]), ip_text(&info[4]), ip_text(&info[8])));
+			if (m_fw->cipsta_ip_only)
+				reply(util::string_format("%s:\"%s\"\r\n", shown, ip_text(&info[0])));
+			else
+				reply(util::string_format(
+						"%1$s:ip:\"%2$s\"\r\n%1$s:gateway:\"%3$s\"\r\n%1$s:netmask:\"%4$s\"\r\n",
+						shown, ip_text(&info[0]), ip_text(&info[4]), ip_text(&info[8])));
 			reply_ok();
 		}
 		else if (set)
@@ -2767,6 +2963,9 @@ void esp8266_at_device::execute(std::string const &line)
 	{
 		cmd_ping(text);
 	}
+	else if (exec && (name == "CIPAPPUP") && m_fw->cipappup)
+	{
+	}
 	else
 	{
 		reply_error();
@@ -2803,7 +3002,35 @@ void esp8266_at_device::cmd_cipstart(std::vector<at_arg> const &args)
 		first = 1;
 	}
 
-	if (args.size() < (first + 3))
+	if (m_fw->cipstart_checks)
+	{
+		at_arg const *const type = (args.size() > first) ? &args[first] : nullptr;
+		if (!type || !type->quoted || ((type->text != "TCP") && (type->text != "UDP")))
+		{
+			reply(m_fw->link_type_error);
+			reply_error();
+			return;
+		}
+		if (args.size() < (first + 2))
+		{
+			reply_error();
+			return;
+		}
+		at_arg const &remote = args[first + 1];
+		if (!remote.quoted || remote.text.empty() || (remote.text.size() > 64))
+		{
+			reply("IP ERROR\r\n");
+			reply_error();
+			return;
+		}
+		if (args.size() < (first + 3))
+		{
+			reply("ENTRY ERROR\r\n");
+			reply_error();
+			return;
+		}
+	}
+	else if (args.size() < (first + 3))
 	{
 		reply_error();
 		return;
@@ -2817,24 +3044,30 @@ void esp8266_at_device::cmd_cipstart(std::vector<at_arg> const &args)
 	}
 	else if (type != "TCP")
 	{
-		reply("Link type ERROR\r\n");
+		reply(m_fw->link_type_error);
 		reply_error();
 		return;
 	}
 
 	auto const port = parse_number(args[first + 2]);
-	if (args[first + 1].text.empty() || !port || (!*port && params.udp) || (*port > 0xffff))
+	unsigned const extra = args.size() - first - 3;
+	if (args[first + 1].text.empty() || !port || (!*port && params.udp && !m_fw->cipstart_checks) || (*port > 0xffff))
 	{
+		reply_error();
+		return;
+	}
+	if (!*port && params.udp && !extra)
+	{
+		reply("Miss param\r\n");
 		reply_error();
 		return;
 	}
 	params.host = args[first + 1].text;
 	params.port = u16(*port);
 
-	unsigned const extra = args.size() - first - 3;
 	if (!params.udp)
 	{
-		if (extra > 1)
+		if (extra > (m_fw->cipstart_checks ? 0 : 1))
 		{
 			reply_error();
 			return;
@@ -2888,13 +3121,13 @@ void esp8266_at_device::cmd_cipstart(std::vector<at_arg> const &args)
 
 	m_link_params[link] = params;
 	m_connect_link = link;
-	m_connect_named = params.udp && (fw_ipaddr(params.host) == IPADDR_NONE) && (params.host != "255.255.255.255");
+	m_connect_named = params.udp && (m_fw->udp_connect_id || ((fw_ipaddr(params.host) == IPADDR_NONE) && (params.host != "255.255.255.255")));
 	m_mode = MODE_CONNECTING;
 	link_open(link, 0);
 }
 
 
-void esp8266_at_device::cmd_cipsend(std::string_view const *text, u8 kind)
+void esp8266_at_device::cmd_cipsend(std::string_view const *text, u8 kind, bool equals)
 {
 	if (!text)
 	{
@@ -2913,6 +3146,11 @@ void esp8266_at_device::cmd_cipsend(std::string_view const *text, u8 kind)
 	if (m_cipmode)
 	{
 		reply("IPMODE=1\r\n");
+		reply_error();
+		return;
+	}
+	if (!equals && m_fw->send_checks)
+	{
 		reply_error();
 		return;
 	}
@@ -2949,6 +3187,12 @@ void esp8266_at_device::cmd_cipsend(std::string_view const *text, u8 kind)
 	s32 length;
 	int err;
 	fw_int(p, length, err);
+	if (!p.empty() && m_fw->send_checks)
+	{
+		reply("Too many inputs.\r\n");
+		reply_error();
+		return;
+	}
 	if (length > s32(MAX_SEND))
 	{
 		reply("too long\r\n");
@@ -3076,7 +3320,8 @@ void esp8266_at_device::send_payload()
 	unsigned const link = m_send_link;
 	unsigned const length = m_send_buf.size();
 	LOGLINK("link %u: sending %u bytes\n", link, length);
-	reply(util::string_format("\r\nRecv %u bytes\r\n", length));
+	if (!m_fw->send_echo)
+		reply(util::string_format("\r\nRecv %u bytes\r\n", length));
 
 	if (m_send_kind == SEND_BUF)
 	{
@@ -3380,6 +3625,8 @@ void esp8266_at_device::cmd_cipclose(std::vector<at_arg> const *args)
 			reply_error();
 			return;
 		}
+		if (close_wait(0))
+			return;
 		link_close(0);
 		link_gone();
 		reply("CLOSED\r\n");
@@ -3404,9 +3651,14 @@ void esp8266_at_device::cmd_cipclose(std::vector<at_arg> const *args)
 	if (*id == LINK_COUNT)
 	{
 		bool closed[LINK_COUNT] = { false, false, false, false, false };
+		bool waiting = false;
 		for (unsigned i = 0; i < LINK_COUNT; i++)
 		{
-			if (m_link_state[i] != LINK_IDLE)
+			if ((m_link_state[i] != LINK_IDLE) && close_wait(i))
+			{
+				waiting = true;
+			}
+			else if (m_link_state[i] != LINK_IDLE)
 			{
 				link_close(i);
 				closed_notice(i);
@@ -3414,7 +3666,8 @@ void esp8266_at_device::cmd_cipclose(std::vector<at_arg> const *args)
 				closed[i] = true;
 			}
 		}
-		reply_ok();
+		if (!waiting)
+			reply_ok();
 
 		for (unsigned i = 0; i < LINK_COUNT; i++)
 		{
@@ -3424,10 +3677,10 @@ void esp8266_at_device::cmd_cipclose(std::vector<at_arg> const *args)
 	}
 	else if (m_link_state[*id] == LINK_IDLE)
 	{
-		reply("UNLINK\r\n");
+		reply(m_fw->unlink_text);
 		reply_error();
 	}
-	else
+	else if (!close_wait(*id))
 	{
 		link_close(*id);
 		closed_notice(*id);
@@ -3490,7 +3743,7 @@ void esp8266_at_device::cmd_cwjap(std::string_view text, bool def)
 		text.remove_prefix(1);
 		ok = take_string(text, password, 64);
 	}
-	if (ok && !text.empty())
+	if (ok && !text.empty() && !m_fw->ap_ssid_only)
 	{
 		ok = (text.front() == ',');
 		text.remove_prefix(1);
@@ -3514,9 +3767,12 @@ void esp8266_at_device::cmd_cwjap(std::string_view text, bool def)
 
 	LOGLINK("station joined \"%s\"\n", ssid);
 	m_joined = 1;
-	if (m_status == STATUS_NO_WIFI)
+	if (m_fw->status_commands)
+		m_status = STATUS_NO_WIFI;
+	else if (m_status == STATUS_NO_WIFI)
 		m_status = STATUS_GOT_IP;
-	reply("WIFI CONNECTED\r\nWIFI GOT IP\r\n");
+	if (!m_fw->quiet_wifi)
+		reply("WIFI CONNECTED\r\nWIFI GOT IP\r\n");
 
 	m_mode = MODE_JOIN;
 	m_join_timer->adjust(attotime::from_msec(CWJAP_TICK_MS));
@@ -3581,7 +3837,10 @@ void esp8266_at_device::cmd_cwlap(std::string_view const *text)
 			(!*channel || (*channel == AP_CHANNEL));
 	if (match && m_ssid[0])
 	{
-		m_scan_text = util::string_format("+CWLAP:(%d,\"%s\",%d,\"%s\",%d,%d%s)\r\n", AP_ECN, m_ssid, AP_RSSI, AP_BSSID, AP_CHANNEL, 0, m_fw->cwlap_cal ? ",0" : "");
+		if (m_fw->cwlap_five)
+			m_scan_text = util::string_format("+CWLAP:(%d,\"%s\",%d,\"%s\",%d)\r\n", AP_ECN, m_ssid, AP_RSSI, AP_BSSID, AP_CHANNEL);
+		else
+			m_scan_text = util::string_format("+CWLAP:(%d,\"%s\",%d,\"%s\",%d,%d%s)\r\n", AP_ECN, m_ssid, AP_RSSI, AP_BSSID, AP_CHANNEL, 0, m_fw->cwlap_cal ? ",0" : "");
 	}
 	else
 	{
@@ -3634,9 +3893,17 @@ void esp8266_at_device::cmd_cipsta(std::string_view text, bool def)
 {
 	std::string item;
 	std::optional<u32> values[3] = { std::nullopt, 0, 0 };
-	bool ok = take_string(text, item, 31) && !item.empty();
+	bool ok = take_string(text, item, m_fw->cipsta_ip_only ? 32 : 31) && !item.empty();
 	if (ok)
 		ok = bool(values[0] = parse_ip(item));
+	if (ok && m_fw->cipsta_ip_only)
+	{
+		u8 info[12];
+		station_info(info);
+		values[1] = get_u32be(&info[4]);
+		values[2] = get_u32be(&info[8]);
+		ok = text.empty();
+	}
 	for (unsigned i = 1; ok && (i < 3) && !text.empty(); i++)
 	{
 		ok = text.front() == ',';
@@ -3677,6 +3944,8 @@ void esp8266_at_device::cmd_cipsta(std::string_view text, bool def)
 
 u8 esp8266_at_device::status_code() const
 {
+	if (m_fw->status_commands)
+		return m_status;
 	if (!m_joined)
 		return STATUS_NO_WIFI;
 	return (m_status == STATUS_NO_WIFI) ? STATUS_GOT_IP : m_status;
@@ -4136,6 +4405,7 @@ void esp8266_at_device::link_open(unsigned link, unsigned delay_ms)
 	LOGLINK("link %u: %s %s:%u\n", link, params.udp ? "UDP" : "TCP", params.host, params.port);
 	m_link_state[link] = LINK_CONNECTING;
 	m_link_paused[link] = false;
+	m_link_closing[link] = CLOSE_NONE;
 	m_link_tcp[link] = !params.udp;
 	m_link_sendbuf[link] = 0;
 	m_unacked[link].clear();
@@ -4149,6 +4419,7 @@ void esp8266_at_device::link_close(unsigned link)
 	LOGLINK("link %u: close\n", link);
 	m_link_state[link] = LINK_IDLE;
 	m_link_paused[link] = false;
+	m_link_closing[link] = CLOSE_NONE;
 	m_link_server[link] = false;
 	tcp_reset(link);
 	m_net->close(link, ++m_link_generation[link]);
@@ -4186,6 +4457,14 @@ void esp8266_at_device::check_server_timeouts()
 		{
 			LOGLINK("link %u: server timeout\n", i);
 			link_close(i);
+			if (m_fw->cipsto_fault)
+			{
+				// AT 0.21 firmware bug, copied: the idle timeout prints CONNECT FAIL instead of
+				// CLOSED, then the watchdog resets the module
+				reply(util::string_format("%u,CONNECT FAIL\r\n", i));
+				restart();
+				return;
+			}
 			closed_notice(i);
 			sendbuf_fail(i);
 			link_gone();
@@ -4233,7 +4512,10 @@ void esp8266_at_device::process_events()
 		case event_type::CONNECTED:
 			LOGLINK("link %u: connected\n", link);
 			m_link_state[link] = LINK_OPEN;
-			m_status = STATUS_CONNECTED;
+			if (m_link_tcp[link] || !m_fw->status_commands)
+				m_status = STATUS_CONNECTED;
+			if (!link)
+				m_reconnects = 0;
 			m_link_local_port[link] = u16(ev.ticket);
 			m_link_udp_moved[link] = false;
 			set_remote(link, ev.peer);
@@ -4257,7 +4539,7 @@ void esp8266_at_device::process_events()
 			m_link_state[link] = LINK_IDLE;
 			if (passthrough)
 			{
-				link_open(link, RECONNECT_DELAY_MS);
+				link_open(link, reconnect_delay());
 			}
 			else if ((m_mode == MODE_CONNECTING) && (link == m_connect_link))
 			{
@@ -4268,7 +4550,7 @@ void esp8266_at_device::process_events()
 				}
 				else if (m_connect_named)
 				{
-					reply(util::string_format("%u,CONNECT FAIL\r\n", link));
+					reply(util::string_format(m_fw->udp_connect_id ? "%u,CONNECT Failed\r\n" : "%u,CONNECT FAIL\r\n", link));
 					reply_error();
 				}
 				else
@@ -4282,6 +4564,8 @@ void esp8266_at_device::process_events()
 			break;
 
 		case event_type::DATA:
+			if (m_link_closing[link])
+				break;
 			m_link_peer[link] = ',' + ev.peer;
 			if (!m_link_tcp[link] && m_link_params[link].udp_mode && ((m_link_params[link].udp_mode == 2) || !m_link_udp_moved[link]))
 			{
@@ -4306,7 +4590,7 @@ void esp8266_at_device::process_events()
 			}
 			LOGLINK("link %u: received %u bytes\n", link, unsigned(ev.data.size()));
 			m_link_active[link] = machine().time();
-			if (passthrough && m_fw->block_free)
+			if (passthrough && m_fw->block_free && !m_fw->ring_passthrough_only)
 			{
 				// 0.40 drops a passthrough datagram that does not fit the ring
 				if ((m_fw->tx_ring - ring_used()) >= ev.data.size())
@@ -4320,6 +4604,8 @@ void esp8266_at_device::process_events()
 				if (!passthrough)
 					reply(ipd_text(link, ev.data.size()));
 				send_raw(ev.data.data(), ev.data.size());
+				if (!passthrough && m_fw->udp_ipd_ok)
+					reply_ok();
 			}
 			if (m_out.size() < OUT_HIGH_WATER)
 				m_net->resume(link, m_link_generation[link]);
@@ -4349,6 +4635,11 @@ void esp8266_at_device::process_events()
 			break;
 
 		case event_type::CLOSED:
+			if (m_link_closing[link])
+			{
+				m_link_closing[link] = CLOSE_DONE;
+				break;
+			}
 			if (m_link_tcp[link] && (m_link_state[link] == LINK_OPEN))
 			{
 				m_tcp[link].fin = true;
@@ -4362,7 +4653,7 @@ void esp8266_at_device::process_events()
 			m_link_paused[link] = false;
 			if (passthrough)
 			{
-				link_open(link, RECONNECT_DELAY_MS);
+				link_open(link, reconnect_delay());
 			}
 			else
 			{
@@ -4498,6 +4789,13 @@ TIMER_CALLBACK_MEMBER(esp8266_at_device::passthrough_flush)
 	if (m_link_state[0] == LINK_OPEN)
 	{
 		m_net->send(0, m_link_generation[0], std::move(m_passthrough_buf), false);
+		if (m_fw->uart_stall && m_link_tcp[0])
+		{
+			// AT 0.21 firmware bug, copied: UART reading stops until the remote ACKs the
+			// packet, so the 128-byte FIFO overflows and later bytes are lost
+			m_uart_stalled = true;
+			m_stall_timer->adjust(attotime::from_msec(PASSTHROUGH_ACK_MS));
+		}
 		if (m_link_tcp[0])
 		{
 			tcp_ack(0);
@@ -4511,6 +4809,7 @@ TIMER_CALLBACK_MEMBER(esp8266_at_device::passthrough_flush)
 
 void esp8266_at_device::restart()
 {
+	stop_waits();
 	close_all_links();
 	server_close();
 	m_events.clear();
@@ -4549,7 +4848,9 @@ TIMER_CALLBACK_MEMBER(esp8266_at_device::restart_done)
 
 void esp8266_at_device::boot_done()
 {
-	bool const translink = m_tl_mode == 1;
+	bool const translink = (m_tl_mode == 1) && (!m_fw->cipmode_stored || m_tl_host[0]);
+	if (m_fw->cipmode_stored)
+		m_cipmode = m_tl_mode;
 	if (translink)
 	{
 		m_cipmode = 1;
@@ -4557,13 +4858,13 @@ void esp8266_at_device::boot_done()
 	}
 	reply("\r\nready\r\n");
 
-	if (m_joined && !m_cipmode)
+	if (m_joined && !m_cipmode && !m_fw->quiet_wifi)
 		reply("WIFI CONNECTED\r\nWIFI GOT IP\r\n");
 
 	if (translink)
 	{
 		esp8266_net::open_params params;
-		params.udp = m_tl_type == TRANSLINK_UDP;
+		params.udp = (m_tl_type == TRANSLINK_UDP) && !m_fw->cipmode_stored;
 		params.port = m_tl_port;
 		params.local_port = m_tl_local_port;
 		params.keepalive = (m_tl_type == TRANSLINK_UDP) ? 0 : m_tl_keepalive;
@@ -4581,6 +4882,83 @@ void esp8266_at_device::boot_done()
 		if ((m_tl_type != TRANSLINK_SSL) && m_joined)
 			link_open(0, 0);
 	}
+}
+
+
+void esp8266_at_device::store_cipmode()
+{
+	m_tl_mode = m_cipmode;
+	if (m_link_state[0] == LINK_OPEN)
+	{
+		m_tl_type = m_link_tcp[0] ? TRANSLINK_TCP : TRANSLINK_UDP;
+		m_tl_port = m_link_remote_port[0];
+		m_tl_local_port = m_link_tcp[0] ? 0 : m_link_local_port[0];
+		std::fill(std::begin(m_tl_host), std::end(m_tl_host), 0);
+		m_link_remote[0].copy(m_tl_host, MAX_TRANSLINK_HOST);
+	}
+	m_translink_stored = true;
+}
+
+
+unsigned esp8266_at_device::reconnect_delay()
+{
+	if (!m_fw->reconnect_step_us)
+		return RECONNECT_DELAY_MS;
+	m_reconnects = std::min<u8>(m_reconnects + 1, 10);
+	return u16(m_reconnects * m_fw->reconnect_step_us) / 1000;
+}
+
+
+bool esp8266_at_device::close_wait(unsigned link)
+{
+	if (!m_fw->close_waits || !m_link_tcp[link] || (m_link_state[link] != LINK_OPEN))
+		return false;
+	m_link_closing[link] = CLOSE_WAIT;
+	m_net->shutdown(link, m_link_generation[link]);
+	if (m_mode != MODE_CLOSING)
+	{
+		m_mode = MODE_CLOSING;
+		m_close_start = machine().time();
+		m_close_timer->adjust(attotime::from_msec(ESP_TCP_TMR_MS), 0, attotime::from_msec(ESP_TCP_TMR_MS));
+	}
+	return true;
+}
+
+
+TIMER_CALLBACK_MEMBER(esp8266_at_device::close_tick)
+{
+	bool const expired = (machine().time() - m_close_start) >= attotime::from_msec(TCP_FIN_WAIT_MS);
+	bool waiting = false;
+	for (unsigned i = 0; i < LINK_COUNT; i++)
+	{
+		if ((m_link_closing[i] == CLOSE_WAIT) && !expired)
+		{
+			waiting = true;
+		}
+		else if (m_link_closing[i] != CLOSE_NONE)
+		{
+			link_close(i);
+			closed_notice(i);
+			sendbuf_fail(i);
+		}
+	}
+	if (waiting)
+		return;
+	m_close_timer->adjust(attotime::never);
+	link_gone();
+	reply_ok();
+	m_mode = MODE_COMMAND;
+	tcp_deliver_all();
+}
+
+
+void esp8266_at_device::stop_waits()
+{
+	m_close_timer->adjust(attotime::never);
+	std::fill(std::begin(m_link_closing), std::end(m_link_closing), CLOSE_NONE);
+	m_stall_timer->adjust(attotime::never);
+	m_uart_stalled = false;
+	m_uart_fifo.clear();
 }
 
 
