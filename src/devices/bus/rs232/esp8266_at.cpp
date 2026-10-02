@@ -131,6 +131,7 @@ struct esp8266_firmware
 	bool ring_passthrough_only = false;
 	bool uart_stall = false;
 	bool cipsto_fault = false;
+	bool server_stop_closes = false;
 };
 
 constexpr char const *const AT021_ABSENT[] = {
@@ -178,7 +179,8 @@ constexpr esp8266_firmware FIRMWARE_021 = {
 		.close_waits = true,
 		.ring_passthrough_only = true,
 		.uart_stall = true,
-		.cipsto_fault = true };
+		.cipsto_fault = true,
+		.server_stop_closes = true };
 
 constexpr esp8266_firmware FIRMWARE_040 = {
 		"\r\nStale Pixels ESP8266 AT emulation, AT 0.40.0.0\r\n",
@@ -950,7 +952,8 @@ private:
 	{
 		CLOSE_NONE,
 		CLOSE_WAIT,
-		CLOSE_DONE
+		CLOSE_DONE,
+		CLOSE_SERVER
 	};
 
 	enum : u8
@@ -1060,6 +1063,7 @@ private:
 	void store_cipmode();
 	unsigned reconnect_delay();
 	bool close_wait(unsigned link);
+	bool close_chain(unsigned first);
 	void stop_waits();
 	void passthrough_byte(u8 byte);
 
@@ -1233,6 +1237,7 @@ private:
 	std::vector<u8> m_nv_other;
 	std::string m_link_home[LINK_COUNT];
 	u8 m_link_closing[LINK_COUNT];
+	bool m_close_chain;
 	attotime m_close_start;
 	u8 m_reconnects;
 	bool m_uart_stalled;
@@ -1361,6 +1366,7 @@ esp8266_at_device::esp8266_at_device(machine_config const &mconfig, char const *
 	, m_tl_host{ 0 }
 	, m_translink_stored(false)
 	, m_link_closing{ CLOSE_NONE, CLOSE_NONE, CLOSE_NONE, CLOSE_NONE, CLOSE_NONE }
+	, m_close_chain(false)
 	, m_reconnects(0)
 	, m_uart_stalled(false)
 	, m_fw(&FIRMWARE_11)
@@ -3093,7 +3099,7 @@ void esp8266_at_device::cmd_cipstart(std::vector<at_arg> const &args)
 		if (extra)
 		{
 			auto const local = parse_number(args[first + 3]);
-			if (!local || (*local > 0xffff))
+			if (!local || (*local > 0xffff) || (!*local && m_fw->cipstart_checks))
 			{
 				reply_error();
 				return;
@@ -3591,6 +3597,14 @@ void esp8266_at_device::cmd_cipserver(std::vector<at_arg> const &args)
 			reply("no change\r\n");
 		server_close();
 		reply_ok();
+		for (unsigned i = 0; m_fw->server_stop_closes && (i < LINK_COUNT); i++)
+		{
+			if (m_link_server[i] && (m_link_state[i] == LINK_OPEN))
+			{
+				m_link_closing[i] = CLOSE_SERVER;
+				m_net->shutdown(i, m_link_generation[i]);
+			}
+		}
 	}
 	else if (m_server_port)
 	{
@@ -3648,7 +3662,12 @@ void esp8266_at_device::cmd_cipclose(std::vector<at_arg> const *args)
 		return;
 	}
 
-	if (*id == LINK_COUNT)
+	if ((*id == LINK_COUNT) && m_fw->close_waits)
+	{
+		if (!close_chain(0))
+			reply_ok();
+	}
+	else if (*id == LINK_COUNT)
 	{
 		bool closed[LINK_COUNT] = { false, false, false, false, false };
 		bool waiting = false;
@@ -4635,6 +4654,13 @@ void esp8266_at_device::process_events()
 			break;
 
 		case event_type::CLOSED:
+			if (m_link_closing[link] == CLOSE_SERVER)
+			{
+				link_close(link);
+				closed_notice(link);
+				link_gone();
+				break;
+			}
 			if (m_link_closing[link])
 			{
 				m_link_closing[link] = CLOSE_DONE;
@@ -4925,28 +4951,58 @@ bool esp8266_at_device::close_wait(unsigned link)
 }
 
 
+bool esp8266_at_device::close_chain(unsigned first)
+{
+	m_close_chain = false;
+	for (unsigned i = first; i < LINK_COUNT; i++)
+	{
+		if ((m_link_state[i] == LINK_IDLE) || m_link_server[i])
+			continue;
+		if (close_wait(i))
+		{
+			m_close_chain = true;
+			m_close_start = machine().time();
+			return true;
+		}
+		link_close(i);
+		closed_notice(i);
+		sendbuf_fail(i);
+	}
+	link_gone();
+	return std::find_if(std::begin(m_link_state), std::end(m_link_state), [] (u8 s) { return s != LINK_IDLE; }) != std::end(m_link_state);
+}
+
+
 TIMER_CALLBACK_MEMBER(esp8266_at_device::close_tick)
 {
 	bool const expired = (machine().time() - m_close_start) >= attotime::from_msec(TCP_FIN_WAIT_MS);
 	bool waiting = false;
+	bool left_open = false;
 	for (unsigned i = 0; i < LINK_COUNT; i++)
 	{
 		if ((m_link_closing[i] == CLOSE_WAIT) && !expired)
 		{
 			waiting = true;
 		}
-		else if (m_link_closing[i] != CLOSE_NONE)
+		else if ((m_link_closing[i] != CLOSE_NONE) && (m_link_closing[i] != CLOSE_SERVER))
 		{
 			link_close(i);
 			closed_notice(i);
 			sendbuf_fail(i);
+			if (m_close_chain)
+			{
+				left_open = close_chain(i + 1);
+				if (m_close_chain)
+					return;
+			}
 		}
 	}
 	if (waiting)
 		return;
 	m_close_timer->adjust(attotime::never);
 	link_gone();
-	reply_ok();
+	if (!left_open)
+		reply_ok();
 	m_mode = MODE_COMMAND;
 	tcp_deliver_all();
 }
@@ -4956,6 +5012,7 @@ void esp8266_at_device::stop_waits()
 {
 	m_close_timer->adjust(attotime::never);
 	std::fill(std::begin(m_link_closing), std::end(m_link_closing), CLOSE_NONE);
+	m_close_chain = false;
 	m_stall_timer->adjust(attotime::never);
 	m_uart_stalled = false;
 	m_uart_fifo.clear();
