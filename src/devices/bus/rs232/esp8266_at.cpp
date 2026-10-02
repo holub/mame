@@ -2,8 +2,8 @@
 // copyright-holders:D. Rimron-Soutter
 /***************************************************************************
 
-    ESP8266 module running Espressif's AT 0.21.0.0, 0.40.0.0 or 1.1.0.0
-    firmware
+    ESP8266 module running Espressif's AT 0.21.0.0, 0.40.0.0, 1.1.0.0 or
+    1.3.0.0 firmware
 
     High-level emulation of the AT command interface.  Links are TCP and
     UDP sockets on the host; there is no WiFi radio.
@@ -55,6 +55,7 @@ constexpr unsigned OUT_HIGH_WATER = 1024;
 constexpr unsigned CONNECT_TIMEOUT_MS = 10'000;
 constexpr unsigned RECONNECT_DELAY_MS = 100;
 constexpr unsigned RX_BATCH_GAP_MS = 20;
+constexpr unsigned RX_TOUT_BITS = 20;
 constexpr u16 DEFAULT_SERVER_PORT = 333;
 constexpr u16 DEFAULT_SERVER_TIMEOUT = 180;
 constexpr unsigned BOOT_DELAY_MS = 300;
@@ -110,6 +111,7 @@ struct esp8266_firmware
 	bool translink_names;
 	bool drop_tcp_any_mode;
 	bool udp_restore;
+	bool keepalive_empty = false;
 	unsigned passthrough_packet = 2'920;
 	unsigned reconnect_step_us = 0;
 	char const *link_type_error = "Link type ERROR\r\n";
@@ -131,7 +133,6 @@ struct esp8266_firmware
 	bool ring_passthrough_only = false;
 	bool uart_stall = false;
 	bool cipsto_fault = false;
-	bool server_stop_closes = false;
 };
 
 constexpr char const *const AT021_ABSENT[] = {
@@ -140,6 +141,7 @@ constexpr char const *const AT021_ABSENT[] = {
 		"CIPCHECKQUEUE", "CIPBUFSTATUS", "SAVETRANSLINK", "CIPSSLSIZE", "CIPDOMAIN", nullptr };
 constexpr char const *const AT040_ABSENT[] = { "CIPSSLSIZE", "CIPDOMAIN", nullptr };
 constexpr char const *const AT11_ABSENT[] = { nullptr };
+constexpr char const *const AT13_ABSENT[] = { "CIPSTART=?", nullptr };
 
 constexpr esp8266_firmware FIRMWARE_021 = {
 		.boot_text = "\r\nStale Pixels ESP8266 AT emulation, AT 0.21.0.0\r\n",
@@ -179,8 +181,7 @@ constexpr esp8266_firmware FIRMWARE_021 = {
 		.close_waits = true,
 		.ring_passthrough_only = true,
 		.uart_stall = true,
-		.cipsto_fault = true,
-		.server_stop_closes = true };
+		.cipsto_fault = true };
 
 constexpr esp8266_firmware FIRMWARE_040 = {
 		"\r\nStale Pixels ESP8266 AT emulation, AT 0.40.0.0\r\n",
@@ -189,7 +190,7 @@ constexpr esp8266_firmware FIRMWARE_040 = {
 		"compile time:Aug  8 2015 17:35:24\r\n",
 		AT040_ABSENT,
 		4 * ESP_TCP_MSS, 8'192, 7'168, 7'999, NV_BLOCK,
-		false, false, true, false, true, true };
+		false, false, true, false, true, true, false };
 
 constexpr esp8266_firmware FIRMWARE_11 = {
 		"\r\nStale Pixels ESP8266 AT emulation, AT 1.1.0.0\r\n",
@@ -198,7 +199,27 @@ constexpr esp8266_firmware FIRMWARE_11 = {
 		"compile time:May 20 2016 15:08:19\r\n",
 		AT11_ABSENT,
 		2 * ESP_TCP_MSS, (2 * ESP_TCP_MSS) + 100, 0, 0, 0,
-		true, true, false, true, false, false };
+		true, true, false, true, false, false, true };
+
+constexpr esp8266_firmware FIRMWARE_13 = {
+		.boot_text = "\r\nStale Pixels ESP8266 AT emulation, AT 1.3.0.0\r\n",
+		.gmr_text =
+				"AT version:1.3.0.0(Jul 14 2016 18:54:01)\r\n"
+				"SDK version:2.0.0(656edbf)\r\n"
+				"compile time:Jul 19 2016 18:44:44\r\n",
+		.absent = AT13_ABSENT,
+		.tcp_wnd = 2 * ESP_TCP_MSS,
+		.tx_ring = (2 * ESP_TCP_MSS) + 100,
+		.block_free = 0,
+		.recover_free = 0,
+		.nv_offset = 0,
+		.cwlap_cal = true,
+		.status_tcp_local = true,
+		.bufstatus_id = false,
+		.translink_names = true,
+		.drop_tcp_any_mode = false,
+		.udp_restore = false,
+		.keepalive_empty = true };
 
 
 class esp8266_net
@@ -973,7 +994,8 @@ private:
 	{
 		FIRMWARE_AT040 = 1,
 		FIRMWARE_AT11 = 2,
-		FIRMWARE_AT021 = 3
+		FIRMWARE_AT021 = 3,
+		FIRMWARE_AT13 = 4
 	};
 
 	enum : u8
@@ -1032,7 +1054,7 @@ private:
 	void force_restart();
 	void execute(std::string const &line);
 	void cmd_cipstart(std::vector<at_arg> const &args);
-	void cmd_cipsend(std::string_view const *text, u8 kind, bool equals = true);
+	void cmd_cipsend(std::string_view const *text, u8 kind, bool equals);
 	void cmd_cipclose(std::vector<at_arg> const *args);
 	void cmd_cipserver(std::vector<at_arg> const &args);
 	void cmd_uart(std::vector<at_arg> const &args, bool def);
@@ -1051,6 +1073,7 @@ private:
 	void cmd_cipbufstatus(std::string_view const *text);
 	void cmd_cipcheckseq(std::string_view text);
 	void send_payload();
+	void send_start();
 	void send_prompt();
 	void send_remote(std::string const &address);
 	void sendbuf_ack(unsigned link);
@@ -1119,6 +1142,7 @@ private:
 	static int fw_string(std::string_view &p, std::string &out, unsigned max);
 	static u32 fw_ipaddr(std::string const &text);
 	static std::optional<u32> parse_number(at_arg const &arg);
+	static bool empty_arg(at_arg const &arg) { return !arg.quoted && arg.text.empty(); }
 	static bool take_string(std::string_view &text, std::string &out, unsigned max);
 	static bool parse_mac(std::string const &text, u8 *mac);
 	static std::optional<u32> parse_ip(std::string const &text);
@@ -1194,7 +1218,8 @@ private:
 	attotime m_rx_last;
 	u16 m_batch_count;
 	u8 m_rst_match;
-	bool m_rst_pending;
+	bool m_busy_batch;
+	bool m_send_queued;
 	u8 m_send_plus;
 	bool m_connect_named;
 	u32 m_link_generation[LINK_COUNT];
@@ -1252,6 +1277,7 @@ ROM_START(esp8266_at)
 	ROM_SYSTEM_BIOS(0, "at040", "AT 0.40.0.0")
 	ROM_SYSTEM_BIOS(1, "at11", "AT 1.1.0.0")
 	ROM_SYSTEM_BIOS(2, "at021", "AT 0.21.0.0")
+	ROM_SYSTEM_BIOS(3, "at13", "AT 1.3.0.0")
 ROM_END
 
 
@@ -1333,7 +1359,8 @@ esp8266_at_device::esp8266_at_device(machine_config const &mconfig, char const *
 	, m_send_escape(false)
 	, m_batch_count(0)
 	, m_rst_match(0)
-	, m_rst_pending(false)
+	, m_busy_batch(false)
+	, m_send_queued(false)
 	, m_send_plus(0)
 	, m_connect_named(false)
 	, m_link_generation{ 0, 0, 0, 0, 0 }
@@ -1395,6 +1422,9 @@ void esp8266_at_device::device_start()
 		break;
 	case FIRMWARE_AT021:
 		m_fw = &FIRMWARE_021;
+		break;
+	case FIRMWARE_AT13:
+		m_fw = &FIRMWARE_13;
 		break;
 	default:
 		m_fw = &FIRMWARE_11;
@@ -1501,7 +1531,8 @@ void esp8266_at_device::device_post_load()
 	m_line_open = false;
 	m_head = 0;
 	m_rx_last = attotime::zero;
-	m_rst_pending = false;
+	m_busy_batch = false;
+	m_send_queued = false;
 	m_send_plus = 0;
 	m_mode = m_rst ? MODE_RESTART : MODE_COMMAND;
 	m_passthrough_timer->adjust(attotime::never);
@@ -1756,7 +1787,7 @@ void esp8266_at_device::station_off()
 		return;
 	m_joined = 0;
 	LOGLINK("station disconnected\n");
-	if (m_fw->quiet_wifi)
+	if (m_fw->quiet_wifi || m_cipmode)
 		return;
 	reply("WIFI DISCONNECT\r\n");
 	if ((m_cwmode != 1) && !m_fw->drop_tcp_any_mode)
@@ -2234,7 +2265,7 @@ void esp8266_at_device::received_byte(u8 byte)
 	attotime const now = machine().time();
 	if ((now - m_rx_last) >= attotime::from_msec(RX_BATCH_GAP_MS))
 	{
-		if (m_send_plus || m_rst_pending)
+		if (m_send_plus || m_busy_batch || m_send_queued)
 			batch_end(0);
 		m_batch_count = 0;
 		m_rst_match = 0;
@@ -2242,12 +2273,6 @@ void esp8266_at_device::received_byte(u8 byte)
 	m_rx_last = now;
 	if (m_batch_count < 0xffff)
 		m_batch_count++;
-	if (std::exchange(m_rst_pending, false))
-	{
-		m_batch_timer->adjust(attotime::never);
-		if (m_mode != MODE_RESTART)
-			reply("\r\nbusy s...\r\n");
-	}
 
 	switch (m_mode)
 	{
@@ -2392,10 +2417,11 @@ void esp8266_at_device::force_restart()
 TIMER_CALLBACK_MEMBER(esp8266_at_device::batch_end)
 {
 	m_batch_timer->adjust(attotime::never);
-	bool const rst = std::exchange(m_rst_pending, false);
+	bool const busy = std::exchange(m_busy_batch, false) && !m_fw->send_busy_only;
 	if (m_mode == MODE_RESTART)
 	{
 		m_send_plus = 0;
+		m_send_queued = false;
 	}
 	else if (m_send_plus == 3)
 	{
@@ -2406,9 +2432,16 @@ TIMER_CALLBACK_MEMBER(esp8266_at_device::batch_end)
 	{
 		send_release();
 	}
-	else if (rst)
+	else if (busy && (m_rst_match == 8) && (m_batch_count == 8))
 	{
 		force_restart();
+	}
+	else
+	{
+		if (busy)
+			reply("\r\nbusy s...\r\n");
+		if (std::exchange(m_send_queued, false))
+			send_start();
 	}
 }
 
@@ -2422,29 +2455,18 @@ void esp8266_at_device::command_byte(u8 byte)
 	{
 		static char const force[] = "AT+RST\r\n";
 		m_rst_match = ((m_rst_match < 8) && (byte == u8(force[m_rst_match]))) ? (m_rst_match + 1) : 0;
-		if (byte != '\n')
-			return;
-		if ((m_mode == MODE_SEND_WAIT) && m_fw->send_busy_only)
+		if (m_mode == MODE_SEND_WAIT)
 		{
-			reply("busy s...\r\n");
+			m_busy_batch = true;
+			m_batch_timer->adjust(attotime::from_msec(RX_BATCH_GAP_MS));
+			if (m_fw->send_busy_only && (byte == '\n'))
+				reply("busy s...\r\n");
 		}
-		else if (m_mode == MODE_SEND_WAIT)
-		{
-			if ((m_rst_match == 8) && (m_batch_count == 8))
-			{
-				m_rst_pending = true;
-				m_batch_timer->adjust(attotime::from_msec(RX_BATCH_GAP_MS));
-			}
-			else
-			{
-				reply("\r\nbusy s...\r\n");
-			}
-		}
-		else if (m_rst_match == 8)
+		else if ((byte == '\n') && (m_rst_match == 8))
 		{
 			force_restart();
 		}
-		else
+		else if (byte == '\n')
 		{
 			reply("\r\nbusy p...\r\n");
 		}
@@ -2576,7 +2598,7 @@ void esp8266_at_device::execute(std::string const &line)
 
 	for (char const *const *absent = m_fw->absent; *absent; absent++)
 	{
-		if (name == *absent)
+		if ((name == *absent) || (rest == *absent))
 		{
 			reply_error();
 			return;
@@ -2697,11 +2719,11 @@ void esp8266_at_device::execute(std::string const &line)
 	}
 	else if (set && (name == "CIPSENDEX"))
 	{
-		cmd_cipsend(&text, SEND_EX);
+		cmd_cipsend(&text, SEND_EX, rest[pos] == '=');
 	}
 	else if (set && (name == "CIPSENDBUF"))
 	{
-		cmd_cipsend(&text, SEND_BUF);
+		cmd_cipsend(&text, SEND_BUF, rest[pos] == '=');
 	}
 	else if ((exec || set) && (name == "CIPBUFRESET"))
 	{
@@ -3008,56 +3030,38 @@ void esp8266_at_device::cmd_cipstart(std::vector<at_arg> const &args)
 		first = 1;
 	}
 
-	if (m_fw->cipstart_checks)
-	{
-		at_arg const *const type = (args.size() > first) ? &args[first] : nullptr;
-		if (!type || !type->quoted || ((type->text != "TCP") && (type->text != "UDP")))
-		{
-			reply(m_fw->link_type_error);
-			reply_error();
-			return;
-		}
-		if (args.size() < (first + 2))
-		{
-			reply_error();
-			return;
-		}
-		at_arg const &remote = args[first + 1];
-		if (!remote.quoted || remote.text.empty() || (remote.text.size() > 64))
-		{
-			reply("IP ERROR\r\n");
-			reply_error();
-			return;
-		}
-		if (args.size() < (first + 3))
-		{
-			reply("ENTRY ERROR\r\n");
-			reply_error();
-			return;
-		}
-	}
-	else if (args.size() < (first + 3))
-	{
-		reply_error();
-		return;
-	}
-
-	esp8266_net::open_params params;
-	std::string const &type = args[first].text;
-	if (type == "UDP")
-	{
-		params.udp = true;
-	}
-	else if (type != "TCP")
+	at_arg const *const type = (args.size() > first) ? &args[first] : nullptr;
+	if (!type || !type->quoted || ((type->text != "TCP") && (type->text != "UDP")))
 	{
 		reply(m_fw->link_type_error);
 		reply_error();
 		return;
 	}
+	if (args.size() < (first + 2))
+	{
+		reply_error();
+		return;
+	}
+	at_arg const &remote = args[first + 1];
+	if (!remote.quoted || remote.text.empty() || (remote.text.size() > 64))
+	{
+		reply("IP ERROR\r\n");
+		reply_error();
+		return;
+	}
+	if (args.size() < (first + 3))
+	{
+		reply("ENTRY ERROR\r\n");
+		reply_error();
+		return;
+	}
 
-	auto const port = parse_number(args[first + 2]);
+	esp8266_net::open_params params;
+	params.udp = type->text == "UDP";
+
+	auto const port = empty_arg(args[first + 2]) ? std::optional<u32>(0) : parse_number(args[first + 2]);
 	unsigned const extra = args.size() - first - 3;
-	if (args[first + 1].text.empty() || !port || (!*port && params.udp && !m_fw->cipstart_checks) || (*port > 0xffff))
+	if (!port || (*port > 0xffff))
 	{
 		reply_error();
 		return;
@@ -3069,7 +3073,8 @@ void esp8266_at_device::cmd_cipstart(std::vector<at_arg> const &args)
 		return;
 	}
 	params.host = args[first + 1].text;
-	params.port = u16(*port);
+	// a UDP remote port 0 becomes espconn_port(), 1024 to 49999
+	params.port = (*port || !params.udp) ? u16(*port) : u16(1024 + (machine().rand() % 48'976));
 
 	if (!params.udp)
 	{
@@ -3080,7 +3085,8 @@ void esp8266_at_device::cmd_cipstart(std::vector<at_arg> const &args)
 		}
 		if (extra)
 		{
-			auto const keepalive = parse_number(args[first + 3]);
+			at_arg const &arg = args[first + 3];
+			auto const keepalive = (m_fw->keepalive_empty && (empty_arg(arg) || (!arg.quoted && (arg.text == "-")))) ? std::optional<u32>(0) : parse_number(arg);
 			if (!keepalive || (*keepalive > 7200))
 			{
 				reply_error();
@@ -3098,8 +3104,9 @@ void esp8266_at_device::cmd_cipstart(std::vector<at_arg> const &args)
 		}
 		if (extra)
 		{
-			auto const local = parse_number(args[first + 3]);
-			if (!local || (*local > 0xffff) || (!*local && m_fw->cipstart_checks))
+			at_arg const &arg = args[first + 3];
+			auto const local = (empty_arg(arg) && !m_fw->cipstart_checks) ? std::optional<u32>(0) : parse_number(arg);
+			if (!local || (*local > 0xffff) || (!*local && !empty_arg(arg)))
 			{
 				reply_error();
 				return;
@@ -3108,7 +3115,7 @@ void esp8266_at_device::cmd_cipstart(std::vector<at_arg> const &args)
 		}
 		if (extra > 1)
 		{
-			auto const mode = parse_number(args[first + 4]);
+			auto const mode = empty_arg(args[first + 4]) ? std::optional<u32>(0) : parse_number(args[first + 4]);
 			if (!mode || (*mode > 2))
 			{
 				reply_error();
@@ -3155,7 +3162,7 @@ void esp8266_at_device::cmd_cipsend(std::string_view const *text, u8 kind, bool 
 		reply_error();
 		return;
 	}
-	if (!equals && m_fw->send_checks)
+	if (!equals)
 	{
 		reply_error();
 		return;
@@ -3323,6 +3330,14 @@ void esp8266_at_device::send_remote(std::string const &address)
 
 void esp8266_at_device::send_payload()
 {
+	m_mode = MODE_SEND_WAIT;
+	m_send_queued = true;
+	m_batch_timer->adjust(attotime::from_hz(m_cur_rate) * RX_TOUT_BITS);
+}
+
+
+void esp8266_at_device::send_start()
+{
 	unsigned const link = m_send_link;
 	unsigned const length = m_send_buf.size();
 	LOGLINK("link %u: sending %u bytes\n", link, length);
@@ -3348,10 +3363,6 @@ void esp8266_at_device::send_payload()
 			return;
 		}
 		m_seg_map[link] = (m_seg_map[link] << 1) & ~u32(1);
-	}
-	else
-	{
-		m_mode = MODE_SEND_WAIT;
 	}
 
 	m_unacked[link].emplace_back(length, m_send_kind == SEND_BUF);
@@ -3597,7 +3608,7 @@ void esp8266_at_device::cmd_cipserver(std::vector<at_arg> const &args)
 			reply("no change\r\n");
 		server_close();
 		reply_ok();
-		for (unsigned i = 0; m_fw->server_stop_closes && (i < LINK_COUNT); i++)
+		for (unsigned i = 0; i < LINK_COUNT; i++)
 		{
 			if (m_link_server[i] && (m_link_state[i] == LINK_OPEN))
 			{
@@ -3790,7 +3801,7 @@ void esp8266_at_device::cmd_cwjap(std::string_view text, bool def)
 		m_status = STATUS_NO_WIFI;
 	else if (m_status == STATUS_NO_WIFI)
 		m_status = STATUS_GOT_IP;
-	if (!m_fw->quiet_wifi)
+	if (!m_fw->quiet_wifi && !m_cipmode)
 		reply("WIFI CONNECTED\r\nWIFI GOT IP\r\n");
 
 	m_mode = MODE_JOIN;
@@ -4521,7 +4532,7 @@ void esp8266_at_device::process_events()
 			continue;
 		}
 
-		if (m_mode == MODE_SEND_DATA)
+		if ((m_mode == MODE_SEND_DATA) || m_busy_batch || m_send_queued)
 			break;
 
 		unsigned const link = ev.link;
@@ -4531,7 +4542,7 @@ void esp8266_at_device::process_events()
 		case event_type::CONNECTED:
 			LOGLINK("link %u: connected\n", link);
 			m_link_state[link] = LINK_OPEN;
-			if (m_link_tcp[link] || !m_fw->status_commands)
+			if (m_link_tcp[link])
 				m_status = STATUS_CONNECTED;
 			if (!link)
 				m_reconnects = 0;
