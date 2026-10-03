@@ -3,7 +3,7 @@
 /***************************************************************************
 
     ESP8266 module running Espressif's AT 0.21.0.0, 0.40.0.0, 1.1.0.0,
-    1.3.0.0 or 2.1.0.0-dev firmware
+    1.3.0.0, 2.1.0.0-dev or 2.2.0.0 firmware
 
     High-level emulation of the AT command interface.  Links are TCP and
     UDP sockets on the host; there is no WiFi radio.
@@ -16,6 +16,11 @@
 #include "multibyte.h"
 
 #include "asio.h"
+
+// asio brings the Windows headers back in after diserial.h
+#undef PARITY_NONE
+#undef PARITY_ODD
+#undef PARITY_EVEN
 
 #include <algorithm>
 #include <array>
@@ -102,7 +107,7 @@ constexpr unsigned RTOS_RX_TOUT_BITS = 100;
 constexpr unsigned RTOS_RX_EVENT = 120;
 constexpr unsigned RTOS_LINE_MAX = 256;
 constexpr unsigned RTOS_TX_RING = 2048;
-constexpr unsigned RTOS_IPD_MAX = 2 * ESP_TCP_MSS;
+constexpr unsigned RTOS_IPD_MAX = 2'920;
 constexpr unsigned RTOS_UDP_MBOX = 6;
 constexpr unsigned RTOS_RECONNECT_MS = 100;
 constexpr unsigned RTOS_PING_MS = 1'000;
@@ -111,6 +116,9 @@ constexpr int RTOS_HEAP_FREE = 49'216;
 constexpr int RTOS_HEAP_LINK = 7'132;
 constexpr int RTOS_HEAP_MORE_LINK = 380;
 constexpr int RTOS_HEAP_SERVER = 1'396;
+constexpr unsigned RTOS_USERRAM_CHUNK = 1'024;
+constexpr unsigned MAX_PASSWORD = 64;
+constexpr unsigned NV_RTOS2 = 81;
 
 struct esp8266_firmware
 {
@@ -154,6 +162,30 @@ struct esp8266_firmware
 	u16 server_timeout = DEFAULT_SERVER_TIMEOUT;
 	unsigned nv_size = NV_BLOCK;
 	unsigned scan_ms = CWLAP_SCAN_MS;
+	unsigned rx_event = RTOS_RX_EVENT;
+	bool cmd_list = false;
+	bool sysstore = false;
+	bool strict_params = false;
+	bool sysram_low = false;
+	bool sysmsg_bit2 = false;
+	bool sleep_modes = false;
+	bool uart_odd = false;
+	u8 uart_flow = 0;
+	bool cwmode_autoconn = false;
+	bool cwjap_nine = false;
+	bool cwlap_eleven = false;
+	bool cipmux_clients = false;
+	bool port_nonzero = false;
+	bool sendex_escape = false;
+	bool cipserver_port = false;
+	bool sto_reset = false;
+	bool recvmode_wake = false;
+	bool udp_recvdata = false;
+	bool reconnintv_wide = false;
+	bool domain_quoted = false;
+	bool ping_wait = false;
+	bool translink_keepalive = false;
+	bool status_closed = false;
 };
 
 constexpr char const *const AT021_ABSENT[] = {
@@ -268,6 +300,55 @@ constexpr esp8266_firmware FIRMWARE_21 = {
 		.server_timeout = 0,
 		.nv_size = NV_BLOCK + NV_EXTRA,
 		.scan_ms = 2'050 };
+
+constexpr esp8266_firmware FIRMWARE_22 = {
+		.boot_text = "\r\nStale Pixels ESP8266 AT emulation, AT 2.2.0.0\r\n",
+		.gmr_text =
+				"AT version:2.2.0.0(s-b097cdf - ESP8266 - Jun 17 2021 12:58:29)\r\n"
+				"SDK version:v3.4\r\n"
+				"compile time(6800286):Jul 14 2021 22:00:36\r\n"
+				"Bin version:2.2.0(ESP8266_1MB)\r\n",
+		.absent = AT21_ABSENT,
+		.tcp_wnd = 4 * 1'440,
+		.tx_ring = RTOS_TX_RING,
+		.block_free = 0,
+		.recover_free = 0,
+		.nv_offset = (4 * NV_BLOCK) + NV_EXTRA,
+		.cwlap_cal = false,
+		.status_tcp_local = true,
+		.bufstatus_id = false,
+		.translink_names = true,
+		.drop_tcp_any_mode = false,
+		.udp_restore = false,
+		.passthrough_packet = ESP_TCP_MSS,
+		.rtos = true,
+		.server_timeout = 0,
+		.nv_size = NV_BLOCK + NV_RTOS2,
+		.scan_ms = 2'050,
+		.rx_event = 100,
+		.cmd_list = true,
+		.sysstore = true,
+		.strict_params = true,
+		.sysram_low = true,
+		.sysmsg_bit2 = true,
+		.sleep_modes = true,
+		.uart_odd = true,
+		.uart_flow = 1,
+		.cwmode_autoconn = true,
+		.cwjap_nine = true,
+		.cwlap_eleven = true,
+		.cipmux_clients = true,
+		.port_nonzero = true,
+		.sendex_escape = true,
+		.cipserver_port = true,
+		.sto_reset = true,
+		.recvmode_wake = true,
+		.udp_recvdata = true,
+		.reconnintv_wide = true,
+		.domain_quoted = true,
+		.ping_wait = true,
+		.translink_keepalive = true,
+		.status_closed = true };
 
 
 class esp8266_net
@@ -421,6 +502,21 @@ public:
 					l.closing = true;
 					if (!l.reading)
 						start_read(link, generation);
+				});
+	}
+
+	void sockopt(unsigned link, u32 generation, s32 linger, bool nodelay)
+	{
+		asio::post(
+				m_ioctx,
+				[this, link, generation, linger, nodelay] ()
+				{
+					net_link &l = *m_links[link];
+					if ((l.generation != generation) || !l.connected || l.is_udp)
+						return;
+					std::error_code err;
+					l.tcp.set_option(asio::socket_base::linger(linger >= 0, std::max<s32>(linger, 0)), err);
+					l.tcp.set_option(asio::ip::tcp::no_delay(nodelay), err);
 				});
 	}
 
@@ -1014,7 +1110,8 @@ private:
 		MODE_SCAN,
 		MODE_DOMAIN,
 		MODE_SEND_RESOLVE,
-		MODE_CLOSING
+		MODE_CLOSING,
+		MODE_USERRAM
 	};
 
 	enum : u8
@@ -1044,7 +1141,8 @@ private:
 		FIRMWARE_AT11 = 2,
 		FIRMWARE_AT021 = 3,
 		FIRMWARE_AT13 = 4,
-		FIRMWARE_AT21 = 5
+		FIRMWARE_AT21 = 5,
+		FIRMWARE_AT22 = 6
 	};
 
 	enum : u8
@@ -1206,8 +1304,10 @@ private:
 	{
 		char const *name;
 		void (esp8266_at_device::*handler)(u8 form);
+		u8 forms = 0;
 	};
 	static rtos_command const s_rtos_commands[];
+	static rtos_command const s_rtos_list_commands[];
 
 	void rtos_byte(u8 byte);
 	void rtos_line_input(std::vector<u8> const &batch);
@@ -1273,6 +1373,19 @@ private:
 	void rtos_cmd_cipsto(u8 form);
 	void rtos_cmd_savetranslink(u8 form);
 	void rtos_cmd_cipreconnintv(u8 form);
+	void rtos_cmd_cmd(u8 form);
+	void rtos_cmd_sysstore(u8 form);
+	void rtos_cmd_userram(u8 form);
+	void rtos_cmd_cwstate(u8 form);
+	void rtos_cmd_cwreconncfg(u8 form);
+	void rtos_cmd_ciptcpopt(u8 form);
+	void rtos_userram_input(std::vector<u8> const &batch);
+	void rtos_join();
+	void rtos_translink_store();
+	void rtos_tcpopt_apply(unsigned link);
+	int rtos_heap();
+	bool rtos_store() const { return !m_fw->sysstore || m_sysstore; }
+	bool rtos_wifi_quiet() const { return m_fw->sysmsg_bit2 ? ((m_mode == MODE_PASSTHROUGH) && !BIT(m_sysmsg, 2)) : bool(m_cipmode); }
 	void rtos_start(bool ex);
 	void rtos_send(bool ex);
 
@@ -1432,6 +1545,28 @@ private:
 	u16 m_idle[LINK_COUNT];
 	std::deque<std::pair<std::string, std::vector<u8> > > m_udp_hold[LINK_COUNT];
 	attotime m_sto_next;
+	u8 m_sysstore;
+	s32 m_sysmsg_def;
+	int m_heap_low;
+	char m_password[MAX_PASSWORD + 1];
+	char m_password_def[MAX_PASSWORD + 1];
+	u8 m_jap_scan;
+	u8 m_jap_pmf;
+	u8 m_jap_def[4];
+	u16 m_reconn_interval;
+	u16 m_reconn_count;
+	u16 m_reconn_def[2];
+	u32 m_reconnect_def;
+	bool m_ever_closed;
+	std::vector<u8> m_userram;
+	unsigned m_userram_at;
+	unsigned m_userram_left;
+	s32 m_tcpopt_linger[LINK_COUNT];
+	u8 m_tcpopt_nodelay[LINK_COUNT];
+	s32 m_tcpopt_sndtimeo[LINK_COUNT];
+	bool m_tcpopt_set[LINK_COUNT];
+	u32 m_ping_ms;
+	esp8266_net::open_params m_tl_pending;
 	esp8266_firmware const *m_fw;
 };
 
@@ -1444,6 +1579,7 @@ ROM_START(esp8266_at)
 	ROM_SYSTEM_BIOS(2, "at021", "AT 0.21.0.0")
 	ROM_SYSTEM_BIOS(3, "at13", "AT 1.3.0.0")
 	ROM_SYSTEM_BIOS(4, "at21", "AT 2.1.0.0")
+	ROM_SYSTEM_BIOS(5, "at22", "AT 2.2.0.0")
 ROM_END
 
 
@@ -1582,6 +1718,26 @@ esp8266_at_device::esp8266_at_device(machine_config const &mconfig, char const *
 	, m_ipd_notice{ false, false, false, false, false }
 	, m_link_ex{ false, false, false, false, false }
 	, m_idle{ 0, 0, 0, 0, 0 }
+	, m_sysstore(1)
+	, m_sysmsg_def(0)
+	, m_heap_low(RTOS_HEAP_FREE)
+	, m_password{ 0 }
+	, m_password_def{ 0 }
+	, m_jap_scan(0)
+	, m_jap_pmf(0)
+	, m_jap_def{ 0, 3, 0, 0 }
+	, m_reconn_interval(1)
+	, m_reconn_count(0)
+	, m_reconn_def{ 1, 0 }
+	, m_reconnect_def(RTOS_RECONNECT_MS)
+	, m_ever_closed(false)
+	, m_userram_at(0)
+	, m_userram_left(0)
+	, m_tcpopt_linger{ -1, -1, -1, -1, -1 }
+	, m_tcpopt_nodelay{ 0, 0, 0, 0, 0 }
+	, m_tcpopt_sndtimeo{ 0, 0, 0, 0, 0 }
+	, m_tcpopt_set{ false, false, false, false, false }
+	, m_ping_ms(0)
 	, m_fw(&FIRMWARE_11)
 {
 }
@@ -1614,6 +1770,9 @@ void esp8266_at_device::device_start()
 		break;
 	case FIRMWARE_AT21:
 		m_fw = &FIRMWARE_21;
+		break;
+	case FIRMWARE_AT22:
+		m_fw = &FIRMWARE_22;
 		break;
 	default:
 		m_fw = &FIRMWARE_11;
@@ -1672,6 +1831,18 @@ void esp8266_at_device::device_start()
 	save_item(NAME(m_jap_reconn));
 	save_item(NAME(m_jap_listen));
 	save_item(NAME(m_link_ex));
+	save_item(NAME(m_sysstore));
+	save_item(NAME(m_sysmsg_def));
+	save_item(NAME(m_password));
+	save_item(NAME(m_jap_scan));
+	save_item(NAME(m_jap_pmf));
+	save_item(NAME(m_reconn_interval));
+	save_item(NAME(m_reconn_count));
+	save_item(NAME(m_ever_closed));
+	save_item(NAME(m_tcpopt_linger));
+	save_item(NAME(m_tcpopt_nodelay));
+	save_item(NAME(m_tcpopt_sndtimeo));
+	save_item(NAME(m_tcpopt_set));
 }
 
 
@@ -1788,6 +1959,16 @@ void esp8266_at_device::nvram_default()
 	m_tl_flag = 1;
 	m_sysmsg = 0;
 	m_sysmsg_stored = false;
+	m_sysmsg_def = 0;
+	std::fill(std::begin(m_password_def), std::end(m_password_def), 0);
+	m_jap_def[0] = 0;
+	m_jap_def[1] = 3;
+	m_jap_def[2] = 0;
+	m_jap_def[3] = 0;
+	m_reconn_def[0] = 1;
+	m_reconn_def[1] = 0;
+	m_reconnect_def = RTOS_RECONNECT_MS;
+	m_def_frame[3] = m_fw->uart_flow;
 	m_nv_other.clear();
 }
 
@@ -1795,7 +1976,7 @@ void esp8266_at_device::nvram_default()
 bool esp8266_at_device::nvram_read(util::read_stream &file)
 {
 	// 0-129: the AT 1.1.0.0 block; 130-259: the AT 0.40.0.0 block; 260-389: the AT 0.21.0.0
-	// block; 390-527: the AT 2.1.0.0-dev block. A later block is present once its version has
+	// block; 390-527: the AT 2.1.0.0-dev block; 528-738: the AT 2.2.0.0 block. A later block is present once its version has
 	// stored a setting, with any block before it padded. Each version keeps the others' blocks
 	// as they are. A block:
 	// 0-7: AT+UART_DEF rate as 32-bit little-endian, then the four AT+UART_DEF framing values
@@ -1809,10 +1990,14 @@ bool esp8266_at_device::nvram_read(util::read_stream &file)
 	// 66-129: remote host, NUL-terminated
 	// The 2.1 block adds 130-133: AT+SYSMSG, 32-bit little-endian; 134-136: AT+CWJAP pci_en, reconn
 	// and listen interval; 137: the last AT+SAVETRANSLINK value for TCP.
+	// The 2.2 block adds 130-133: AT+SYSMSG; 134-137: AT+CWJAP pci_en, listen interval, scan mode
+	// and PMF; 138-141: AT+CWRECONNCFG interval and count; 142-145: AT+CIPRECONNINTV in ms, 32-bit;
+	// 146-210: AT+CWJAP password, NUL-terminated. Values over one byte are little-endian.
 	// The 1.1 block alone may be cut after 8 bytes (AT+UART_DEF alone) or 58 (no AT+SAVETRANSLINK).
-	u8 buf[(4 * NV_BLOCK) + NV_EXTRA];
+	u8 buf[(5 * NV_BLOCK) + NV_EXTRA + NV_RTOS2];
 	auto const [err, actual] = util::read(file, buf, sizeof(buf));
-	if (err || ((actual != 8) && (actual != 58) && (actual != NV_BLOCK) && (actual != (2 * NV_BLOCK)) && (actual != (3 * NV_BLOCK)) && (actual != sizeof(buf))))
+	if (err || ((actual != 8) && (actual != 58) && (actual != NV_BLOCK) && (actual != (2 * NV_BLOCK)) && (actual != (3 * NV_BLOCK)) &&
+			(actual != ((4 * NV_BLOCK) + NV_EXTRA)) && (actual != sizeof(buf))))
 		return false;
 
 	std::size_t const offset = m_fw->nv_offset;
@@ -1836,7 +2021,11 @@ bool esp8266_at_device::nv_parse(u8 const *buf, std::size_t length)
 		return false;
 	if (translink && ((buf[58] > 1) || (buf[59] > TRANSLINK_SSL) || buf[NV_BLOCK - 1]))
 		return false;
-	if (extra && ((buf[134] > 1) || (buf[135] > 1) || (buf[136] > 99) || (buf[137] > 1)))
+	if (extra && !m_fw->sysstore && ((buf[134] > 1) || (buf[135] > 1) || (buf[136] > 99) || (buf[137] > 1)))
+		return false;
+	if (extra && m_fw->sysstore && ((buf[134] > 1) || (buf[135] > 100) || (buf[136] > 1) || (buf[137] > 3) ||
+			(get_u16le(&buf[138]) > 7'200) || (get_u16le(&buf[140]) > 1'000) || (get_u32le(&buf[142]) < 100) ||
+			(get_u32le(&buf[142]) > 3'600'000) || buf[146 + MAX_PASSWORD]))
 		return false;
 
 	bool const uart = length && ((length == 8) || BIT(buf[9], 0));
@@ -1871,7 +2060,17 @@ bool esp8266_at_device::nv_parse(u8 const *buf, std::size_t length)
 		std::copy(&buf[66], &buf[NV_BLOCK], std::begin(m_tl_host));
 		m_translink_stored = true;
 	}
-	if (extra)
+	if (extra && m_fw->sysstore)
+	{
+		m_sysmsg_def = s32(get_u32le(&buf[130]));
+		m_sysmsg_stored = true;
+		std::copy(&buf[134], &buf[138], std::begin(m_jap_def));
+		m_reconn_def[0] = get_u16le(&buf[138]);
+		m_reconn_def[1] = get_u16le(&buf[140]);
+		m_reconnect_def = get_u32le(&buf[142]);
+		std::copy(&buf[146], &buf[147 + MAX_PASSWORD], std::begin(m_password_def));
+	}
+	else if (extra)
 	{
 		m_sysmsg = s32(get_u32le(&buf[130]));
 		m_sysmsg_stored = true;
@@ -1886,7 +2085,7 @@ bool esp8266_at_device::nv_parse(u8 const *buf, std::size_t length)
 
 bool esp8266_at_device::nvram_write(util::write_stream &file)
 {
-	u8 buf[(4 * NV_BLOCK) + NV_EXTRA];
+	u8 buf[(5 * NV_BLOCK) + NV_EXTRA + NV_RTOS2];
 	std::fill(std::begin(buf), std::end(buf), 0);
 	std::copy(m_nv_other.begin(), m_nv_other.end(), std::begin(buf));
 	std::size_t const offset = m_fw->nv_offset;
@@ -1924,6 +2123,16 @@ std::size_t esp8266_at_device::nv_build(u8 *buf) const
 	std::copy(std::begin(m_tl_host), std::end(m_tl_host), &buf[66]);
 	if (m_fw->nv_size <= NV_BLOCK)
 		return NV_BLOCK;
+	if (m_fw->sysstore)
+	{
+		put_u32le(&buf[130], u32(m_sysmsg_def));
+		std::copy(std::begin(m_jap_def), std::end(m_jap_def), &buf[134]);
+		put_u16le(&buf[138], m_reconn_def[0]);
+		put_u16le(&buf[140], m_reconn_def[1]);
+		put_u32le(&buf[142], m_reconnect_def);
+		std::copy(std::begin(m_password_def), std::end(m_password_def), &buf[146]);
+		return m_fw->nv_size;
+	}
 	put_u32le(&buf[130], u32(m_sysmsg));
 	buf[134] = m_jap_pci;
 	buf[135] = m_jap_reconn;
@@ -1957,7 +2166,7 @@ void esp8266_at_device::set_defaults()
 	m_cur_rate = m_def_rate;
 	std::copy(std::begin(m_def_frame), std::end(m_def_frame), std::begin(m_cur_frame));
 	// a stored parity 1 is refused by the driver at start-up
-	if (m_fw->rtos && (m_cur_frame[2] == 1))
+	if (m_fw->rtos && !m_fw->uart_odd && (m_cur_frame[2] == 1))
 		m_cur_frame[2] = 0;
 	apply_serial();
 
@@ -1980,8 +2189,33 @@ void esp8266_at_device::set_defaults()
 		m_idle[i] = 0;
 	}
 
+	m_sysstore = 1;
+	m_heap_low = RTOS_HEAP_FREE;
+	m_ever_closed = false;
+	m_userram.clear();
+	m_ping_ms = 0;
+	for (unsigned i = 0; i < LINK_COUNT; i++)
+	{
+		m_tcpopt_linger[i] = -1;
+		m_tcpopt_nodelay[i] = 0;
+		m_tcpopt_sndtimeo[i] = 0;
+		m_tcpopt_set[i] = false;
+	}
+	if (m_fw->sysstore)
+	{
+		m_sysmsg = m_sysmsg_def;
+		std::copy(std::begin(m_password_def), std::end(m_password_def), std::begin(m_password));
+		m_jap_pci = m_jap_def[0];
+		m_jap_listen = m_jap_def[1];
+		m_jap_scan = m_jap_def[2];
+		m_jap_pmf = m_jap_def[3];
+		m_reconn_interval = m_reconn_def[0];
+		m_reconn_count = m_reconn_def[1];
+		m_reconnect_ms = m_reconnect_def;
+	}
+
 	m_cwmode = m_cwmode_def;
-	m_sleep = 2;
+	m_sleep = m_fw->sleep_modes ? 1 : 2;
 	m_dhcp = m_dhcp_def;
 	m_sta_static = !BIT(m_dhcp, 1) && m_sta_static_def;
 	std::copy(std::begin(m_sta_ip_def), std::end(m_sta_ip_def), std::begin(m_sta_ip));
@@ -4286,8 +4520,17 @@ TIMER_CALLBACK_MEMBER(esp8266_at_device::ping_done)
 		return;
 	if (m_fw->rtos)
 	{
-		reply("+PING:TIMEOUT\r\n");
-		reply_error();
+		if (m_ping_replied && m_ping_ms && (m_ping_ms < RTOS_PING_MS))
+		{
+			reply(util::string_format("+PING:%u\r\n", m_ping_ms));
+			reply_ok();
+		}
+		else
+		{
+			if (!m_ping_replied || m_ping_ms)
+				reply("+PING:TIMEOUT\r\n");
+			reply_error();
+		}
 		m_mode = MODE_COMMAND;
 		stop_ping();
 		return;
@@ -4706,6 +4949,7 @@ void esp8266_at_device::link_open(unsigned link, unsigned delay_ms)
 void esp8266_at_device::link_close(unsigned link)
 {
 	LOGLINK("link %u: close\n", link);
+	m_ever_closed = true;
 	m_link_state[link] = LINK_IDLE;
 	m_link_paused[link] = false;
 	m_link_closing[link] = CLOSE_NONE;
@@ -5168,7 +5412,7 @@ void esp8266_at_device::boot_done()
 	}
 	reply("\r\nready\r\n");
 
-	if (m_joined && !m_cipmode && !m_fw->quiet_wifi)
+	if (m_joined && (!m_cipmode || (m_fw->sysmsg_bit2 && BIT(m_sysmsg, 2))) && !m_fw->quiet_wifi)
 		reply("WIFI CONNECTED\r\nWIFI GOT IP\r\n");
 
 	if (translink)
@@ -5358,13 +5602,61 @@ esp8266_at_device::rtos_command const esp8266_at_device::s_rtos_commands[] = {
 		{ "+CIPRECONNINTV", &esp8266_at_device::rtos_cmd_cipreconnintv },
 		{ nullptr, nullptr } };
 
+// forms: bit 0 execute, bit 1 query, bit 2 test, bit 3 set
+esp8266_at_device::rtos_command const esp8266_at_device::s_rtos_list_commands[] = {
+		{ "E0", &esp8266_at_device::rtos_cmd_e0, 0x1 },
+		{ "E1", &esp8266_at_device::rtos_cmd_e1, 0x1 },
+		{ "+RST", &esp8266_at_device::rtos_cmd_rst, 0x1 },
+		{ "+GMR", &esp8266_at_device::rtos_cmd_gmr, 0x1 },
+		{ "+CMD", &esp8266_at_device::rtos_cmd_cmd, 0x2 },
+		{ "+SYSTIMESTAMP", &esp8266_at_device::rtos_cmd_systimestamp, 0xa },
+		{ "+SLEEP", &esp8266_at_device::rtos_cmd_sleep, 0xa },
+		{ "+SYSRAM", &esp8266_at_device::rtos_cmd_sysram, 0x2 },
+		{ "+SYSMSG", &esp8266_at_device::rtos_cmd_sysmsg, 0xa },
+		{ "+SYSLOG", &esp8266_at_device::rtos_cmd_syslog, 0xa },
+		{ "+SYSSTORE", &esp8266_at_device::rtos_cmd_sysstore, 0xa },
+		{ "+USERRAM", &esp8266_at_device::rtos_cmd_userram, 0xa },
+		{ "+CWMODE", &esp8266_at_device::rtos_cmd_cwmode, 0xa },
+		{ "+CWSTATE", &esp8266_at_device::rtos_cmd_cwstate, 0x2 },
+		{ "+CWJAP", &esp8266_at_device::rtos_cmd_cwjap, 0xb },
+		{ "+CWRECONNCFG", &esp8266_at_device::rtos_cmd_cwreconncfg, 0xa },
+		{ "+CWLAP", &esp8266_at_device::rtos_cmd_cwlap, 0x9 },
+		{ "+CWQAP", &esp8266_at_device::rtos_cmd_cwqap, 0x1 },
+		{ "+CWDHCP", &esp8266_at_device::rtos_cmd_cwdhcp, 0xa },
+		{ "+CIFSR", &esp8266_at_device::rtos_cmd_cifsr, 0x1 },
+		{ "+CIPSTA", &esp8266_at_device::rtos_cmd_cipsta, 0xa },
+		{ "+CIPDOMAIN", &esp8266_at_device::rtos_cmd_cipdomain, 0x8 },
+		{ "+CIPSTATUS", &esp8266_at_device::rtos_cmd_cipstatus, 0x1 },
+		{ "+CIPSTART", &esp8266_at_device::rtos_cmd_cipstart, 0x8 },
+		{ "+CIPSTARTEX", &esp8266_at_device::rtos_cmd_cipstartex, 0x8 },
+		{ "+CIPTCPOPT", &esp8266_at_device::rtos_cmd_ciptcpopt, 0xa },
+		{ "+CIPCLOSE", &esp8266_at_device::rtos_cmd_cipclose, 0x9 },
+		{ "+CIPSEND", &esp8266_at_device::rtos_cmd_cipsend, 0x9 },
+		{ "+CIPSENDEX", &esp8266_at_device::rtos_cmd_cipsendex, 0x8 },
+		{ "+CIPDINFO", &esp8266_at_device::rtos_cmd_cipdinfo, 0xa },
+		{ "+CIPMUX", &esp8266_at_device::rtos_cmd_cipmux, 0xa },
+		{ "+CIPRECVMODE", &esp8266_at_device::rtos_cmd_ciprecvmode, 0xa },
+		{ "+CIPRECVDATA", &esp8266_at_device::rtos_cmd_ciprecvdata, 0x8 },
+		{ "+CIPRECVLEN", &esp8266_at_device::rtos_cmd_ciprecvlen, 0x2 },
+		{ "+CIPSERVER", &esp8266_at_device::rtos_cmd_cipserver, 0xa },
+		{ "+CIPSERVERMAXCONN", &esp8266_at_device::rtos_cmd_cipservermaxconn, 0xa },
+		{ "+CIPMODE", &esp8266_at_device::rtos_cmd_cipmode, 0xa },
+		{ "+CIPSTO", &esp8266_at_device::rtos_cmd_cipsto, 0xa },
+		{ "+SAVETRANSLINK", &esp8266_at_device::rtos_cmd_savetranslink, 0x8 },
+		{ "+CIPRECONNINTV", &esp8266_at_device::rtos_cmd_cipreconnintv, 0xa },
+		{ "+PING", &esp8266_at_device::rtos_cmd_ping, 0x8 },
+		{ "+UART", &esp8266_at_device::rtos_cmd_uart, 0xa },
+		{ "+UART_CUR", &esp8266_at_device::rtos_cmd_uart, 0xa },
+		{ "+UART_DEF", &esp8266_at_device::rtos_cmd_uart, 0xa },
+		{ nullptr, nullptr } };
+
 
 void esp8266_at_device::rtos_byte(u8 byte)
 {
 	if (m_mode == MODE_RESTART)
 		return;
 	m_rx_batch.push_back(byte);
-	if (m_rx_batch.size() >= RTOS_RX_EVENT)
+	if (m_rx_batch.size() >= m_fw->rx_event)
 		rtos_batch(0);
 	else
 		m_rx_timer->adjust(attotime::from_hz(m_cur_rate) * RTOS_RX_TOUT_BITS);
@@ -5395,6 +5687,10 @@ TIMER_CALLBACK_MEMBER(esp8266_at_device::rtos_batch)
 
 	case MODE_PASSTHROUGH:
 		rtos_passthrough_input(batch);
+		break;
+
+	case MODE_USERRAM:
+		rtos_userram_input(batch);
 		break;
 
 	default:
@@ -5469,7 +5765,18 @@ void esp8266_at_device::rtos_send_input(std::vector<u8> const &batch)
 	while (it != batch.end())
 	{
 		u8 const byte = *it++;
-		if (m_send_rtos_ex && (byte == '0') && !m_send_buf.empty() && (m_send_buf.back() == '\\'))
+		if (m_send_rtos_ex && m_fw->sendex_escape && (m_send_escape || (byte == '\\')))
+		{
+			if (!std::exchange(m_send_escape, !m_send_escape))
+				continue;
+			if (byte != '0')
+			{
+				m_send_buf.push_back(byte);
+				if (m_send_buf.size() < m_send_length)
+					continue;
+			}
+		}
+		else if (m_send_rtos_ex && !m_fw->sendex_escape && (byte == '0') && !m_send_buf.empty() && (m_send_buf.back() == '\\'))
 		{
 			m_send_buf.pop_back();
 		}
@@ -5479,12 +5786,28 @@ void esp8266_at_device::rtos_send_input(std::vector<u8> const &batch)
 			if (m_send_buf.size() < m_send_length)
 				continue;
 		}
+		m_send_escape = false;
 		m_mode = MODE_SEND_WAIT;
 		if (it != batch.end())
 			reply("\r\nbusy p...\r\n");
 		rtos_send_start();
 		return;
 	}
+}
+
+
+void esp8266_at_device::rtos_userram_input(std::vector<u8> const &batch)
+{
+	unsigned const count = std::min<unsigned>(batch.size(), m_userram_left);
+	std::copy_n(batch.begin(), count, m_userram.begin() + m_userram_at);
+	m_userram_at += count;
+	m_userram_left -= count;
+	if (m_userram_left)
+		return;
+	m_mode = MODE_COMMAND;
+	reply("\r\nWRITE OK\r\n");
+	if (count < batch.size())
+		rtos_line_input(std::vector<u8>(batch.begin() + count, batch.end()));
 }
 
 
@@ -5620,12 +5943,17 @@ void esp8266_at_device::rtos_dispatch()
 		reply_ok();
 		return;
 	}
-	rtos_command const *cmd = s_rtos_commands;
+	rtos_command const *cmd = m_fw->cmd_list ? s_rtos_list_commands : s_rtos_commands;
 	while (cmd->name && (m_cmd_name != cmd->name))
 		cmd++;
 	if (!cmd->name)
 	{
 		rtos_err_code(0x0109'0000);
+		reply_error();
+		return;
+	}
+	if (m_fw->cmd_list && !BIT(cmd->forms, m_cmd_form))
+	{
 		reply_error();
 		return;
 	}
@@ -5699,7 +6027,7 @@ int esp8266_at_device::rtos_str(unsigned index, std::string &value)
 	{
 		// firmware bug, copied: a missing string prints its code but reads as given, unchanged
 		rtos_err_code(0x0108'0000 | index);
-		return PARA_OK;
+		return m_fw->strict_params ? PARA_FAIL : PARA_OK;
 	}
 	std::string const &text = m_para[index];
 	if (text.empty())
@@ -5736,7 +6064,7 @@ void esp8266_at_device::rtos_link_count()
 	bool tcp = false;
 	for (unsigned i = 0; i < LINK_COUNT; i++)
 		tcp = tcp || ((m_link_state[i] == LINK_OPEN) && m_link_tcp[i]);
-	m_status = tcp ? STATUS_CONNECTED : STATUS_DISCONNECTED;
+	m_status = tcp ? STATUS_CONNECTED : (!m_fw->status_closed || m_ever_closed) ? STATUS_DISCONNECTED : STATUS_GOT_IP;
 }
 
 
@@ -5765,6 +6093,8 @@ void esp8266_at_device::rtos_closed(unsigned link)
 	if ((m_mode == MODE_PASSTHROUGH) && !link)
 	{
 		m_link_state[link] = LINK_IDLE;
+		if (m_fw->sysmsg_bit2 && BIT(m_sysmsg, 2))
+			closed_notice(link);
 		link_open(link, reconnect_delay());
 		return;
 	}
@@ -6004,6 +6334,10 @@ void esp8266_at_device::rtos_events()
 			m_link_local_port[link] = u16(ev.ticket);
 			m_link_udp_moved[link] = false;
 			set_remote(link, ev.peer);
+			if (m_link_tcp[link])
+				rtos_tcpopt_apply(link);
+			if ((m_mode == MODE_PASSTHROUGH) && !link && m_fw->sysmsg_bit2 && BIT(m_sysmsg, 2))
+				reply("CONNECT\r\n");
 			if ((m_mode == MODE_CONNECTING) && (link == m_connect_link))
 			{
 				if (BIT(m_sysmsg, 1))
@@ -6106,7 +6440,10 @@ void esp8266_at_device::rtos_events()
 				tcp_reset(id);
 				m_link_active[id] = machine().time();
 				m_net->adopt(id, ++m_link_generation[id], ev.ticket);
+				rtos_tcpopt_apply(id);
 				m_server_clients++;
+				if (m_fw->status_closed)
+					rtos_link_count();
 				if (BIT(m_sysmsg, 1))
 					reply(util::string_format(
 							"+LINK_CONN:0,%u,\"TCP\",1,\"%s\",%u,%u\r\n",
@@ -6136,6 +6473,8 @@ void esp8266_at_device::rtos_events()
 		case event_type::PING_FAILED:
 			if (m_mode == MODE_PING)
 			{
+				if (m_fw->ping_wait)
+					reply("+PING:TIMEOUT\r\n");
 				reply_error();
 				m_mode = MODE_COMMAND;
 				stop_ping();
@@ -6143,7 +6482,12 @@ void esp8266_at_device::rtos_events()
 			break;
 
 		case event_type::PING_REPLY:
-			if (m_mode == MODE_PING)
+			if ((m_mode == MODE_PING) && m_fw->ping_wait)
+			{
+				m_ping_replied = true;
+				m_ping_ms = ev.ticket;
+			}
+			else if (m_mode == MODE_PING)
 			{
 				// a reply time of 0 ms reads as a failure in the firmware
 				if (ev.ticket >= RTOS_PING_MS)
@@ -6179,6 +6523,19 @@ void esp8266_at_device::rtos_events()
 					rtos_send_prompt();
 				}
 			}
+			else if ((m_mode == MODE_DOMAIN) && (m_cmd_name == "+SAVETRANSLINK"))
+			{
+				if (ev.peer.empty())
+				{
+					reply_error();
+				}
+				else
+				{
+					rtos_translink_store();
+					reply_ok();
+				}
+				m_mode = MODE_COMMAND;
+			}
 			else if (m_mode == MODE_DOMAIN)
 			{
 				if (ev.peer.empty())
@@ -6187,7 +6544,7 @@ void esp8266_at_device::rtos_events()
 				}
 				else
 				{
-					reply(util::string_format("+CIPDOMAIN:%s\r\n", ev.peer));
+					reply(util::string_format(m_fw->domain_quoted ? "+CIPDOMAIN:\"%s\"\r\n" : "+CIPDOMAIN:%s\r\n", ev.peer));
 					reply_ok();
 				}
 				m_mode = MODE_COMMAND;
@@ -6219,6 +6576,7 @@ void esp8266_at_device::rtos_send_start()
 void esp8266_at_device::rtos_send_prompt()
 {
 	m_send_buf.clear();
+	m_send_escape = false;
 	m_mode = MODE_SEND_DATA;
 	reply("\r\nOK\r\n\r\n>");
 }
@@ -6308,7 +6666,7 @@ void esp8266_at_device::rtos_send(bool ex)
 void esp8266_at_device::rtos_start(bool ex)
 {
 	unsigned const count = m_para.size();
-	if (count < 3)
+	if ((count < 3) && !m_fw->strict_params)
 	{
 		rtos_err_code(0x0106'0100 | count);
 		reply_error();
@@ -6331,7 +6689,7 @@ void esp8266_at_device::rtos_start(bool ex)
 	s32 port;
 	if ((rtos_str(i, type) != PARA_OK) || ((type != "TCP") && (type != "UDP")) ||
 			(rtos_str(i + 1, host) != PARA_OK) || host.empty() ||
-			(rtos_digit(i + 2, port) != PARA_OK) || (u32(port) > 0xffff))
+			(rtos_digit(i + 2, port) != PARA_OK) || (u32(port) > 0xffff) || (!port && m_fw->port_nonzero))
 	{
 		reply_error();
 		return;
@@ -6465,7 +6823,19 @@ void esp8266_at_device::rtos_cmd_sysram(u8 form)
 		reply_error();
 		return;
 	}
-	int heap = RTOS_HEAP_FREE;
+	int const heap = rtos_heap();
+	m_heap_low = std::min(m_heap_low, heap);
+	if (m_fw->sysram_low)
+		reply(util::string_format("%s:%d,%d", m_cmd_name, heap, m_heap_low));
+	else
+		reply(util::string_format("%s:%d", m_cmd_name, heap));
+	reply_ok();
+}
+
+
+int esp8266_at_device::rtos_heap()
+{
+	int heap = RTOS_HEAP_FREE - int(m_userram.size());
 	unsigned links = 0;
 	for (unsigned i = 0; i < LINK_COUNT; i++)
 	{
@@ -6478,8 +6848,7 @@ void esp8266_at_device::rtos_cmd_sysram(u8 form)
 		heap -= RTOS_HEAP_LINK + (RTOS_HEAP_MORE_LINK * (links - 1));
 	if (m_server_up)
 		heap -= RTOS_HEAP_SERVER;
-	reply(util::string_format("%s:%d", m_cmd_name, std::max(heap, 0)));
-	reply_ok();
+	return std::max(heap, 0);
 }
 
 
@@ -6489,6 +6858,21 @@ void esp8266_at_device::rtos_cmd_sysmsg(u8 form)
 	if (form == FORM_QUERY)
 	{
 		reply(util::string_format("%s:%d", m_cmd_name, m_sysmsg));
+		reply_ok();
+	}
+	else if ((form == FORM_SET) && m_fw->sysmsg_bit2)
+	{
+		if ((rtos_digit(0, value) != PARA_OK) || (m_para.size() != 1) || (u32(value) > 7))
+		{
+			reply_error();
+			return;
+		}
+		m_sysmsg = value;
+		if (rtos_store())
+		{
+			m_sysmsg_def = value;
+			m_sysmsg_stored = true;
+		}
 		reply_ok();
 	}
 	else if ((form == FORM_SET) && (m_para.size() != 1))
@@ -6534,8 +6918,20 @@ void esp8266_at_device::rtos_cmd_systimestamp(u8 form)
 	s32 value;
 	if (form == FORM_QUERY)
 	{
-		s32 const elapsed = s32((machine().time() - m_timestamp_base).seconds());
-		reply(util::string_format("%s:%d", m_cmd_name, s32(u32(m_timestamp) + u32(elapsed))));
+		u64 const elapsed = (machine().time() - m_timestamp_base).as_ticks(1'000'000);
+		u64 const seconds = ((u64(s64(m_timestamp)) * 1'000'000) + elapsed) / 1'000'000;
+		reply(util::string_format("%s:%d", m_cmd_name, s32(u32(seconds))));
+		reply_ok();
+	}
+	else if ((form == FORM_SET) && m_fw->strict_params)
+	{
+		if ((rtos_digit(0, value) != PARA_OK) || (m_para.size() != 1))
+		{
+			reply_error();
+			return;
+		}
+		m_timestamp = value;
+		m_timestamp_base = machine().time();
 		reply_ok();
 	}
 	else if ((form == FORM_SET) && (m_para.size() != 1))
@@ -6564,6 +6960,16 @@ void esp8266_at_device::rtos_cmd_sleep(u8 form)
 		reply(util::string_format("%s:%u\r\n", m_cmd_name, m_sleep));
 		reply_ok();
 	}
+	else if ((form == FORM_SET) && m_fw->sleep_modes)
+	{
+		if ((rtos_digit(0, value) != PARA_OK) || (m_para.size() != 1) || (u32(value) > 3) || (value && (m_cwmode > 1)))
+		{
+			reply_error();
+			return;
+		}
+		m_sleep = (value == 0) ? 0 : (value == 1) ? 1 : 3;
+		reply_ok();
+	}
 	else if ((form == FORM_SET) && (m_para.size() != 1))
 	{
 		rtos_err_code(0x0106'0100 | m_para.size());
@@ -6589,7 +6995,7 @@ void esp8266_at_device::rtos_cmd_uart(u8 form)
 		if (m_cmd_name == "+UART_DEF")
 		{
 			// a stored parity 1 reads back as -1
-			int const parity = (m_def_frame[2] == 1) ? -1 : m_def_frame[2];
+			int const parity = ((m_def_frame[2] == 1) && !m_fw->uart_odd) ? -1 : m_def_frame[2];
 			reply(util::string_format("%s:%u,%u,%u,%d,%u\r\n", m_cmd_name, m_def_rate, m_def_frame[0], m_def_frame[1], parity, m_def_frame[3]));
 		}
 		else
@@ -6625,7 +7031,7 @@ void esp8266_at_device::rtos_cmd_uart(u8 form)
 	m_cur_frame[0] = u8(values[1]);
 	m_cur_frame[1] = u8(values[2]);
 	// the driver refuses odd parity as the firmware passes it, and keeps the old setting
-	if (values[3] != 1)
+	if ((values[3] != 1) || m_fw->uart_odd)
 		m_cur_frame[2] = u8(values[3]);
 	m_cur_frame[3] = u8(values[4]);
 	m_serial_dirty = true;
@@ -6648,6 +7054,51 @@ void esp8266_at_device::rtos_cmd_cwmode(u8 form)
 	else if (form != FORM_SET)
 	{
 		reply_error();
+	}
+	else if (m_fw->cwmode_autoconn)
+	{
+		s32 autoconn = 1;
+		if (rtos_digit(0, value) != PARA_OK)
+		{
+			reply_error();
+			return;
+		}
+		if (u32(value) > 3)
+		{
+			rtos_err_code(0x0107'0001);
+			reply_error();
+			return;
+		}
+		int const result = (m_para.size() > 1) ? rtos_digit(1, autoconn) : PARA_OMITTED;
+		if ((m_para.size() > 2) || (result == PARA_FAIL) || (u32(autoconn) > 1))
+		{
+			reply_error();
+			return;
+		}
+		if (result == PARA_OMITTED)
+			autoconn = 1;
+		if (u32(value) == m_cwmode)
+		{
+			reply_ok();
+			return;
+		}
+		bool const join = BIT(value, 0) && !BIT(m_cwmode, 0) && autoconn && m_ssid[0];
+		m_cwmode = u8(value);
+		if (rtos_store())
+		{
+			m_cwmode_def = m_cwmode;
+			m_wifi_stored = true;
+		}
+		if (!BIT(m_cwmode, 0))
+			m_joined = 0;
+		reply_ok();
+		if (join)
+		{
+			m_joined = 1;
+			if (!rtos_wifi_quiet())
+				reply("WIFI CONNECTED\r\nWIFI GOT IP\r\n");
+			rtos_link_count();
+		}
 	}
 	else if (m_para.size() != 1)
 	{
@@ -6676,6 +7127,109 @@ void esp8266_at_device::rtos_cmd_cwmode(u8 form)
 
 void esp8266_at_device::rtos_cmd_cwjap(u8 form)
 {
+	if (m_fw->cwjap_nine && (form == FORM_QUERY))
+	{
+		if (m_joined && m_ssid[0])
+			reply(util::string_format(
+					"%s:\"%s\",\"%s\",%d,%d,%u,%u,%u,%u,%u\r\n",
+					m_cmd_name, m_ssid, AP_BSSID, AP_CHANNEL, AP_RSSI, m_jap_pci, m_reconn_interval, m_jap_listen, m_jap_scan, m_jap_pmf));
+		reply_ok();
+		return;
+	}
+	if (m_fw->cwjap_nine && (form == FORM_EXEC))
+	{
+		if (m_joined && BIT(m_cwmode, 0))
+			reply_ok();
+		else if (!BIT(m_cwmode, 0) || !m_ssid[0])
+			reply_error();
+		else
+			rtos_join();
+		return;
+	}
+	if (m_fw->cwjap_nine)
+	{
+		if (!BIT(m_cwmode, 0))
+		{
+			reply_error();
+			return;
+		}
+		std::string ssid, password, bssid;
+		int const ssid_result = rtos_str(0, ssid);
+		if ((ssid_result == PARA_FAIL) || ((ssid_result == PARA_OK) && (ssid.empty() || (ssid.size() > MAX_SSID))) ||
+				((ssid_result == PARA_OMITTED) && !m_ssid[0]))
+		{
+			reply_error();
+			return;
+		}
+		int const password_result = rtos_str(1, password);
+		if ((password_result == PARA_FAIL) || ((ssid_result == PARA_OMITTED) && (password_result != PARA_OMITTED)) || (password.size() > MAX_PASSWORD))
+		{
+			reply_error();
+			return;
+		}
+		if (ssid_result == PARA_OMITTED)
+		{
+			ssid = m_ssid;
+			password = m_password;
+		}
+		u8 mac[6];
+		unsigned next = 2;
+		if ((m_para.size() > next) && ((rtos_str(next, bssid) == PARA_FAIL) || (!bssid.empty() && !parse_mac(bssid, mac))))
+		{
+			reply_error();
+			return;
+		}
+		next++;
+		// an empty listen interval field reads 0, not the default 3
+		s32 values[6][3] = { { 0, 0, 1 }, { 1, 0, 7'200 }, { 3, 1, 100 }, { 0, 0, 1 }, { 15, 3, 600 }, { 0, 0, 3 } };
+		for (unsigned i = 0; i < 6; i++, next++)
+		{
+			if (m_para.size() <= next)
+				break;
+			int const result = rtos_digit(next, values[i][0]);
+			if (result == PARA_OMITTED)
+			{
+				if (i == 2)
+					values[i][0] = 0;
+			}
+			else if ((result == PARA_FAIL) || (values[i][0] < values[i][1]) || (values[i][0] > values[i][2]))
+			{
+				reply_error();
+				return;
+			}
+		}
+		if (m_para.size() > 9)
+		{
+			reply_error();
+			return;
+		}
+
+		if (m_joined)
+			rtos_close_clients();
+		std::fill(std::begin(m_ssid), std::end(m_ssid), 0);
+		std::copy(ssid.begin(), ssid.end(), std::begin(m_ssid));
+		std::fill(std::begin(m_password), std::end(m_password), 0);
+		std::copy(password.begin(), password.end(), std::begin(m_password));
+		m_jap_pci = u8(values[0][0]);
+		m_reconn_interval = u16(values[1][0]);
+		m_jap_listen = u8(values[2][0]);
+		m_jap_scan = u8(values[3][0]);
+		m_jap_pmf = u8(values[5][0]);
+		if (rtos_store())
+		{
+			std::copy(std::begin(m_ssid), std::end(m_ssid), std::begin(m_ssid_def));
+			std::copy(std::begin(m_password), std::end(m_password), std::begin(m_password_def));
+			m_jap_def[0] = m_jap_pci;
+			m_jap_def[1] = m_jap_listen;
+			m_jap_def[2] = m_jap_scan;
+			m_jap_def[3] = m_jap_pmf;
+			m_reconn_def[0] = m_reconn_interval;
+			m_wifi_stored = true;
+		}
+		LOGLINK("station joined \"%s\"\n", ssid);
+		rtos_join();
+		return;
+	}
 	if (form == FORM_QUERY)
 	{
 		if (m_joined && m_ssid[0])
@@ -6772,7 +7326,8 @@ void esp8266_at_device::rtos_cmd_cwlap(u8 form)
 	}
 	if (!BIT(m_cwmode, 0))
 	{
-		rtos_err_code(0x010a'0000);
+		if (!m_fw->strict_params)
+			rtos_err_code(0x010a'0000);
 		reply_error();
 		return;
 	}
@@ -6791,7 +7346,8 @@ void esp8266_at_device::rtos_cmd_cwlap(u8 form)
 		}
 		if ((ssid.size() > MAX_SSID) || (!mac_text.empty() && !parse_mac(mac_text, mac)))
 		{
-			rtos_err_code((ssid.size() > MAX_SSID) ? 0x0107'0001 : 0x0107'0002);
+			if (!m_fw->strict_params)
+				rtos_err_code((ssid.size() > MAX_SSID) ? 0x0107'0001 : 0x0107'0002);
 			reply_error();
 			return;
 		}
@@ -6802,7 +7358,7 @@ void esp8266_at_device::rtos_cmd_cwlap(u8 form)
 				values[i] = 0;
 			if ((result == PARA_FAIL) || (u32(values[i]) > u32(high[i])))
 			{
-				if (result != PARA_FAIL)
+				if ((result != PARA_FAIL) && !m_fw->strict_params)
 					rtos_err_code(0x0107'0003 + i);
 				reply_error();
 				return;
@@ -6815,7 +7371,9 @@ void esp8266_at_device::rtos_cmd_cwlap(u8 form)
 			(mac_text.empty() || (util::string_format("%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]) == AP_BSSID)) &&
 			(!values[0] || (values[0] == AP_CHANNEL));
 	if (match && m_ssid[0])
-		m_scan_text = util::string_format("+CWLAP:(%d,\"%s\",%d,\"%s\",%d)\r\n", AP_ECN, m_ssid, AP_RSSI, AP_BSSID, AP_CHANNEL);
+		m_scan_text = util::string_format(
+				m_fw->cwlap_eleven ? "+CWLAP:(%d,\"%s\",%d,\"%s\",%d,-1,-1,4,4,7,0)\r\n" : "+CWLAP:(%d,\"%s\",%d,\"%s\",%d)\r\n",
+				AP_ECN, m_ssid, AP_RSSI, AP_BSSID, AP_CHANNEL);
 	else
 		m_scan_text.clear();
 	m_mode = MODE_SCAN;
@@ -6836,7 +7394,7 @@ void esp8266_at_device::rtos_cmd_cwqap(u8 form)
 		{
 			LOGLINK("station disconnected\n");
 			m_joined = 0;
-			if (!m_cipmode)
+			if (!rtos_wifi_quiet())
 				reply("WIFI DISCONNECT\r\n");
 			rtos_close_clients();
 		}
@@ -6893,8 +7451,11 @@ void esp8266_at_device::rtos_cmd_cwdhcp(u8 form)
 			std::copy(std::begin(m_sta_ip_def), std::end(m_sta_ip_def), std::begin(m_sta_ip));
 			m_sta_static = 1;
 		}
-		m_dhcp_def = m_dhcp;
-		m_wifi_stored = true;
+		if (rtos_store())
+		{
+			m_dhcp_def = m_dhcp;
+			m_wifi_stored = true;
+		}
 		reply_ok();
 	}
 }
@@ -6938,10 +7499,13 @@ void esp8266_at_device::rtos_cmd_cipsta(u8 form)
 	put_u32be(&m_sta_ip[8], netmask);
 	m_sta_static = 1;
 	m_dhcp &= ~2;
-	std::copy(std::begin(m_sta_ip), std::end(m_sta_ip), std::begin(m_sta_ip_def));
-	m_sta_static_def = 1;
-	m_dhcp_def = m_dhcp;
-	m_wifi_stored = true;
+	if (rtos_store())
+	{
+		std::copy(std::begin(m_sta_ip), std::end(m_sta_ip), std::begin(m_sta_ip_def));
+		m_sta_static_def = 1;
+		m_dhcp_def = m_dhcp;
+		m_wifi_stored = true;
+	}
 	reply_ok();
 }
 
@@ -6967,6 +7531,8 @@ void esp8266_at_device::rtos_cmd_ping(u8 form)
 		return;
 	}
 	LOGLINK("ping %s\n", host);
+	m_ping_replied = false;
+	m_ping_ms = 0;
 	m_ping_timer->adjust(attotime::never);
 	m_mode = MODE_PING;
 	m_net->ping(++m_ping_generation, host);
@@ -6976,7 +7542,15 @@ void esp8266_at_device::rtos_cmd_ping(u8 form)
 void esp8266_at_device::rtos_cmd_cipdomain(u8 form)
 {
 	std::string host;
-	if ((form != FORM_SET) || (m_para.size() != 1) || (rtos_str(0, host) != PARA_OK) || host.empty())
+	s32 type = 1;
+	if ((form != FORM_SET) || (rtos_str(0, host) != PARA_OK) || host.empty() || (m_para.size() > (m_fw->domain_quoted ? 2 : 1)) ||
+			((m_para.size() > 1) && ((rtos_digit(1, type) != PARA_OK) || (type < 1) || (type > 3))))
+	{
+		reply_error();
+		return;
+	}
+	// the build has no IPv6, so an IPv6-only lookup fails
+	if (type == 2)
 	{
 		reply_error();
 		return;
@@ -6984,7 +7558,7 @@ void esp8266_at_device::rtos_cmd_cipdomain(u8 form)
 	u32 const ip = fw_ipaddr(host);
 	if ((ip != IPADDR_NONE) || (host == "255.255.255.255"))
 	{
-		reply(util::string_format("%s:%u.%u.%u.%u\r\n", m_cmd_name, BIT(ip, 24, 8), BIT(ip, 16, 8), BIT(ip, 8, 8), BIT(ip, 0, 8)));
+		reply(util::string_format(m_fw->domain_quoted ? "%s:\"%u.%u.%u.%u\"\r\n" : "%s:%u.%u.%u.%u\r\n", m_cmd_name, BIT(ip, 24, 8), BIT(ip, 16, 8), BIT(ip, 8, 8), BIT(ip, 0, 8)));
 		reply_ok();
 		return;
 	}
@@ -7144,7 +7718,10 @@ void esp8266_at_device::rtos_cmd_cipmux(u8 form)
 		reply_ok();
 		return;
 	}
-	if ((form != FORM_SET) || (m_status == STATUS_CONNECTED) || (m_para.size() != 1) || (rtos_digit(0, value) != PARA_OK))
+	bool tcp = false;
+	for (unsigned i = 0; i < LINK_COUNT; i++)
+		tcp = tcp || ((m_link_state[i] == LINK_OPEN) && m_link_tcp[i]);
+	if ((form != FORM_SET) || (m_fw->cipmux_clients ? tcp : (m_status == STATUS_CONNECTED)) || (m_para.size() != 1) || (rtos_digit(0, value) != PARA_OK))
 	{
 		reply_error();
 		return;
@@ -7174,6 +7751,8 @@ void esp8266_at_device::rtos_cmd_ciprecvmode(u8 form)
 		if (!m_recv_mode)
 			std::fill(std::begin(m_ipd_notice), std::end(m_ipd_notice), false);
 		reply_ok();
+		for (unsigned i = 0; m_fw->recvmode_wake && m_recv_mode && (i < LINK_COUNT); i++)
+			rtos_notice(i);
 	}
 	else
 	{
@@ -7203,9 +7782,39 @@ void esp8266_at_device::rtos_cmd_ciprecvdata(u8 form)
 		i = 1;
 	}
 	unsigned const held = rtos_held(link);
-	if ((rtos_digit(i, length) != PARA_OK) || (length < 1) || (m_para.size() != (i + 1)) || !held || !m_link_tcp[link])
+	if ((rtos_digit(i, length) != PARA_OK) || (length < 1) || (m_para.size() != (i + 1)) || !held || (!m_link_tcp[link] && !m_fw->udp_recvdata))
 	{
 		reply_error();
+		return;
+	}
+
+	if (!m_link_tcp[link])
+	{
+		// each read takes a whole datagram; the part of one that does not fit is lost
+		auto &hold = m_udp_hold[link];
+		unsigned left = std::min<unsigned>(unsigned(length), held);
+		std::string peer = hold.front().first;
+		std::vector<u8> data;
+		while (left && !hold.empty())
+		{
+			unsigned const take = std::min<unsigned>(left, hold.front().second.size());
+			data.insert(data.end(), hold.front().second.begin(), hold.front().second.begin() + take);
+			hold.pop_front();
+			left -= take;
+		}
+		std::string head = util::string_format("%s:%u,", m_cmd_name, unsigned(data.size()));
+		if (m_dinfo)
+			head += rtos_peer(peer).substr(1) + ',';
+		reply(head);
+		send_raw(data.data(), data.size());
+		reply_ok();
+		if (m_link_paused[link] && (hold.size() < RTOS_UDP_MBOX))
+		{
+			m_link_paused[link] = false;
+			m_net->resume(link, m_link_generation[link]);
+		}
+		m_ipd_notice[link] = false;
+		rtos_notice(link);
 		return;
 	}
 
@@ -7251,6 +7860,98 @@ void esp8266_at_device::rtos_cmd_ciprecvlen(u8 form)
 
 void esp8266_at_device::rtos_cmd_cipserver(u8 form)
 {
+	if (m_fw->cipserver_port && (form == FORM_QUERY))
+	{
+		if (m_server_up)
+			reply(util::string_format("%s:1,%u,\"TCP\"\r\n", m_cmd_name, m_server_port));
+		else
+			reply(m_cmd_name + ":0\r\n");
+		reply_ok();
+		return;
+	}
+	if (m_fw->cipserver_port)
+	{
+		s32 mode, value = DEFAULT_SERVER_PORT;
+		std::string type;
+		unsigned expect = 1;
+		if (!m_mux || (rtos_digit(0, mode) != PARA_OK) || (u32(mode) > 1))
+		{
+			reply_error();
+			return;
+		}
+		if ((mode == 1) && (m_para.size() > 1))
+		{
+			int const result = rtos_digit(1, value);
+			if (result == PARA_OMITTED)
+				value = DEFAULT_SERVER_PORT;
+			if ((result == PARA_FAIL) || (value < 1) || (value > 0xffff))
+			{
+				reply_error();
+				return;
+			}
+			expect = 2;
+			if (m_para.size() > 2)
+			{
+				if ((rtos_str(2, type) == PARA_FAIL) || (!type.empty() && (type != "TCP")))
+				{
+					reply_error();
+					return;
+				}
+				expect = 3;
+			}
+		}
+		else if (!mode && (m_para.size() > 1))
+		{
+			if ((rtos_digit(1, value) != PARA_OK) || (u32(value) > 1))
+			{
+				reply_error();
+				return;
+			}
+			expect = 2;
+		}
+		if (m_para.size() != expect)
+		{
+			reply_error();
+			return;
+		}
+
+		if (mode)
+		{
+			m_server_port = u16(value);
+			if (m_server_up)
+			{
+				reply_ok();
+				return;
+			}
+			m_server_up = true;
+			m_listen_full = false;
+			m_server_clients = 0;
+			m_mode = MODE_LISTEN;
+			rtos_listen();
+			return;
+		}
+		if (m_server_up)
+			server_close();
+		m_listen_full = false;
+		// firmware bug, copied: =0,1 closes every link, client links too
+		if ((expect == 2) && value)
+		{
+			for (unsigned i = 0; i < LINK_COUNT; i++)
+			{
+				if (m_link_state[i] != LINK_IDLE)
+				{
+					bool const server = m_link_server[i];
+					link_close(i);
+					closed_notice(i);
+					if (server)
+						rtos_client_gone(i);
+				}
+			}
+			rtos_link_count();
+		}
+		reply_ok();
+		return;
+	}
 	if (form == FORM_QUERY)
 	{
 		// with a server running the firmware prints an uninitialised buffer
@@ -7371,6 +8072,8 @@ void esp8266_at_device::rtos_cmd_cipsto(u8 form)
 	}
 	else
 	{
+		if (m_fw->sto_reset && (u16(value) != m_server_timeout))
+			std::fill(std::begin(m_idle), std::end(m_idle), 0);
 		m_server_timeout = u16(value);
 		if (!m_server_timeout)
 		{
@@ -7389,6 +8092,56 @@ void esp8266_at_device::rtos_cmd_cipsto(u8 form)
 void esp8266_at_device::rtos_cmd_savetranslink(u8 form)
 {
 	s32 mode;
+	if (m_fw->translink_keepalive)
+	{
+		std::string host, type;
+		s32 port = 0, value = 0;
+		if ((form != FORM_SET) || (rtos_digit(0, mode) != PARA_OK))
+		{
+			reply_error();
+			return;
+		}
+		if (mode != 1)
+		{
+			if (m_para.size() != 1)
+			{
+				reply_error();
+				return;
+			}
+			m_tl_mode = 0;
+			m_translink_stored = true;
+			reply_ok();
+			return;
+		}
+		bool ok = (rtos_str(1, host) == PARA_OK) && !host.empty() && (host.size() <= MAX_TRANSLINK_HOST) &&
+				(rtos_digit(2, port) == PARA_OK) && (port >= 1) && (port <= 0xffff) &&
+				((m_para.size() <= 3) || (rtos_str(3, type) != PARA_FAIL)) &&
+				(type.empty() || (type == "TCP") || (type == "UDP")) && (m_para.size() <= 5);
+		bool const udp = type == "UDP";
+		int const result = (ok && (m_para.size() > 4)) ? rtos_digit(4, value) : PARA_OMITTED;
+		if (result == PARA_OMITTED)
+			value = 0;
+		ok = ok && (result != PARA_FAIL) && (udp ? ((result == PARA_OMITTED) || ((value >= 1) && (value <= 0xffff))) : (u32(value) <= 7200));
+		if (!ok)
+		{
+			reply_error();
+			return;
+		}
+		m_tl_pending.udp = udp;
+		m_tl_pending.host = host;
+		m_tl_pending.port = u16(port);
+		m_tl_pending.keepalive = udp ? 0 : u16(value);
+		m_tl_pending.local_port = udp ? u16(value) : 0;
+		if ((fw_ipaddr(host) != IPADDR_NONE) || (host == "255.255.255.255"))
+		{
+			rtos_translink_store();
+			reply_ok();
+			return;
+		}
+		m_mode = MODE_DOMAIN;
+		m_net->resolve(++m_domain_generation, host);
+		return;
+	}
 	if ((form != FORM_SET) || (rtos_digit(0, mode) != PARA_OK) || ((mode != 1) && (m_para.size() != 1)))
 	{
 		reply_error();
@@ -7444,12 +8197,285 @@ void esp8266_at_device::rtos_cmd_savetranslink(u8 form)
 void esp8266_at_device::rtos_cmd_cipreconnintv(u8 form)
 {
 	s32 value;
+	if (m_fw->reconnintv_wide && (form == FORM_QUERY))
+	{
+		reply(util::string_format("%s:%u\r\n", m_cmd_name, m_reconnect_ms / 100));
+		reply_ok();
+		return;
+	}
+	if (m_fw->reconnintv_wide)
+	{
+		if ((m_para.size() != 1) || (rtos_digit(0, value) != PARA_OK) || (value < 1) || (value > 36'000))
+		{
+			reply_error();
+			return;
+		}
+		m_reconnect_ms = u32(value) * 100;
+		if (rtos_store())
+		{
+			m_reconnect_def = m_reconnect_ms;
+			m_sysmsg_stored = true;
+		}
+		reply_ok();
+		return;
+	}
 	if ((form != FORM_SET) || (m_para.size() != 1) || (rtos_digit(0, value) != PARA_OK) || (value < 2) || (value > 35'999))
 	{
 		reply_error();
 		return;
 	}
 	m_reconnect_ms = u32(value) * 100;
+	reply_ok();
+}
+
+
+void esp8266_at_device::rtos_join()
+{
+	m_joined = 1;
+	rtos_link_count();
+	if (!rtos_wifi_quiet())
+		reply("WIFI CONNECTED\r\nWIFI GOT IP\r\n");
+	m_mode = MODE_JOIN;
+	m_join_timer->adjust(attotime::from_msec(CWJAP_TICK_MS));
+}
+
+
+void esp8266_at_device::rtos_translink_store()
+{
+	m_tl_mode = 1;
+	m_tl_type = m_tl_pending.udp ? TRANSLINK_UDP : TRANSLINK_TCP;
+	m_tl_port = m_tl_pending.port;
+	m_tl_keepalive = m_tl_pending.keepalive;
+	m_tl_local_port = m_tl_pending.local_port;
+	std::fill(std::begin(m_tl_host), std::end(m_tl_host), 0);
+	m_tl_pending.host.copy(m_tl_host, MAX_TRANSLINK_HOST);
+	m_translink_stored = true;
+}
+
+
+void esp8266_at_device::rtos_tcpopt_apply(unsigned link)
+{
+	if (m_tcpopt_set[link] && (m_link_state[link] == LINK_OPEN) && m_link_tcp[link])
+		m_net->sockopt(link, m_link_generation[link], m_tcpopt_linger[link], m_tcpopt_nodelay[link]);
+}
+
+
+void esp8266_at_device::rtos_cmd_cmd(u8 form)
+{
+	std::string text = "+CMD:0,\"AT\",0,0,0,1\r\n";
+	unsigned index = 1;
+	for (rtos_command const *cmd = s_rtos_list_commands; cmd->name; cmd++, index++)
+		text += util::string_format(
+				"+CMD:%u,\"AT%s\",%u,%u,%u,%u\r\n",
+				index, cmd->name, BIT(cmd->forms, FORM_TEST), BIT(cmd->forms, FORM_QUERY), BIT(cmd->forms, FORM_SET), BIT(cmd->forms, FORM_EXEC));
+	reply(text);
+	reply_ok();
+}
+
+
+void esp8266_at_device::rtos_cmd_sysstore(u8 form)
+{
+	s32 value;
+	if (form == FORM_QUERY)
+	{
+		reply(util::string_format("%s:%u\r\n", m_cmd_name, m_sysstore));
+		reply_ok();
+	}
+	else if ((rtos_digit(0, value) != PARA_OK) || (u32(value) > 1) || (m_para.size() != 1))
+	{
+		reply_error();
+	}
+	else
+	{
+		m_sysstore = u8(value);
+		reply_ok();
+	}
+}
+
+
+void esp8266_at_device::rtos_cmd_userram(u8 form)
+{
+	if (form == FORM_QUERY)
+	{
+		reply(util::string_format("%s:%u\r\n", m_cmd_name, unsigned(m_userram.size())));
+		reply_ok();
+		return;
+	}
+
+	s32 op, length = 0, offset = 0;
+	unsigned expect = 1;
+	if ((rtos_digit(0, op) != PARA_OK) || (u32(op) > 4))
+	{
+		reply_error();
+		return;
+	}
+	if ((op >= 1) && (op <= 3))
+	{
+		if ((rtos_digit(1, length) != PARA_OK) || (length < 1))
+		{
+			reply_error();
+			return;
+		}
+		expect = 2;
+	}
+	if ((op >= 2) && (op <= 3) && (m_para.size() != expect))
+	{
+		int const result = rtos_digit(2, offset);
+		if ((result == PARA_FAIL) || (offset < 0))
+		{
+			reply_error();
+			return;
+		}
+		if (result == PARA_OMITTED)
+			offset = 0;
+		expect = 3;
+	}
+	if (m_para.size() != expect)
+	{
+		reply_error();
+		return;
+	}
+
+	bool const fits = !m_userram.empty() && ((u64(u32(offset)) + u32(length)) <= m_userram.size());
+	switch (op)
+	{
+	case 0:
+	case 4:
+		if (m_userram.empty())
+		{
+			reply_error();
+			return;
+		}
+		if (op)
+			std::fill(m_userram.begin(), m_userram.end(), 0);
+		else
+			m_userram.clear();
+		reply_ok();
+		return;
+
+	case 1:
+		if (!m_userram.empty() || (length > rtos_heap()))
+		{
+			reply_error();
+			return;
+		}
+		m_userram.assign(length, 0);
+		reply_ok();
+		return;
+
+	case 2:
+		if (!fits)
+		{
+			reply_error();
+			return;
+		}
+		reply("\r\nOK\r\n\r\n>");
+		m_userram_at = unsigned(offset);
+		m_userram_left = unsigned(length);
+		m_mode = MODE_USERRAM;
+		return;
+
+	default:
+		if (!fits)
+		{
+			reply_error();
+			return;
+		}
+		for (unsigned done = 0; done < unsigned(length); )
+		{
+			unsigned const count = std::min<unsigned>(unsigned(length) - done, RTOS_USERRAM_CHUNK);
+			reply(util::string_format("%s:%u,", m_cmd_name, count));
+			send_raw(&m_userram[offset + done], count);
+			done += count;
+		}
+		reply_ok();
+		return;
+	}
+}
+
+
+void esp8266_at_device::rtos_cmd_cwstate(u8 form)
+{
+	u8 const state = m_joined ? 2 : m_ssid[0] ? 4 : 0;
+	std::string ssid = m_ssid;
+	// a 32-byte SSID has no terminator, so the password is printed after it
+	if (ssid.size() == MAX_SSID)
+		ssid += m_password;
+	reply(util::string_format("%s:%u,\"%s\"\r\n", m_cmd_name, state, ssid));
+	reply_ok();
+}
+
+
+void esp8266_at_device::rtos_cmd_cwreconncfg(u8 form)
+{
+	s32 interval, count;
+	if (form == FORM_QUERY)
+	{
+		reply(util::string_format("%s:%u,%u\r\n", m_cmd_name, m_reconn_interval, m_reconn_count));
+		reply_ok();
+	}
+	else if ((rtos_digit(0, interval) != PARA_OK) || (u32(interval) > 7'200) || (rtos_digit(1, count) != PARA_OK) || (u32(count) > 1'000) ||
+			(m_para.size() != 2))
+	{
+		reply_error();
+	}
+	else
+	{
+		m_reconn_interval = u16(interval);
+		m_reconn_count = u16(count);
+		if (rtos_store())
+		{
+			m_reconn_def[0] = m_reconn_interval;
+			m_reconn_def[1] = m_reconn_count;
+			m_sysmsg_stored = true;
+		}
+		reply_ok();
+	}
+}
+
+
+void esp8266_at_device::rtos_cmd_ciptcpopt(u8 form)
+{
+	if (form == FORM_QUERY)
+	{
+		std::string text;
+		for (unsigned i = 0; i < LINK_COUNT; i++)
+			text += util::string_format("%s:%u,%d,%u,%d\r\n", m_cmd_name, i, m_tcpopt_linger[i], m_tcpopt_nodelay[i], m_tcpopt_sndtimeo[i]);
+		reply(text);
+		reply_ok();
+		return;
+	}
+
+	unsigned const first = m_mux ? 1 : 0;
+	s32 id = 0, linger = -1, nodelay = 0, sndtimeo = 0;
+	int const results[] = {
+			m_mux ? rtos_digit(0, id) : PARA_OK,
+			(m_para.size() == (first + 3)) ? rtos_digit(first, linger) : PARA_FAIL,
+			(m_para.size() == (first + 3)) ? rtos_digit(first + 1, nodelay) : PARA_FAIL,
+			(m_para.size() == (first + 3)) ? rtos_digit(first + 2, sndtimeo) : PARA_FAIL };
+	if (results[1] == PARA_OMITTED)
+		linger = -1;
+	if (results[2] == PARA_OMITTED)
+		nodelay = 0;
+	if (results[3] == PARA_OMITTED)
+		sndtimeo = 0;
+	if ((results[0] != PARA_OK) || (results[1] == PARA_FAIL) || (results[2] == PARA_FAIL) || (results[3] == PARA_FAIL) ||
+			(u32(id) > LINK_COUNT) || (linger < -1) || (u32(nodelay) > 1))
+	{
+		reply_error();
+		return;
+	}
+	for (unsigned i = 0; i < LINK_COUNT; i++)
+	{
+		if ((u32(id) == LINK_COUNT) || (u32(id) == i))
+		{
+			m_tcpopt_linger[i] = linger;
+			m_tcpopt_nodelay[i] = u8(nodelay);
+			m_tcpopt_sndtimeo[i] = sndtimeo;
+			m_tcpopt_set[i] = true;
+			rtos_tcpopt_apply(i);
+		}
+	}
 	reply_ok();
 }
 
