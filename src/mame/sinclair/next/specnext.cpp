@@ -4325,6 +4325,8 @@ void specnext_state::ks2(machine_config &config)
 	m_machine_id = 0x0a;
 	m_board_issue = 2;
 	m_ram->set_default_size("2M").set_extra_options(nullptr);
+
+	subdevice<rs232_port_device>("rs232_esp")->set_default_option("esp8266_at");
 }
 
 void specnext_state::ks3(machine_config &config)
@@ -4334,6 +4336,8 @@ void specnext_state::ks3(machine_config &config)
 	m_machine_id = 0x0a;
 	m_board_issue = 3;
 	m_ram->set_default_size("4M").set_extra_options(nullptr);
+
+	subdevice<rs232_port_device>("rs232_esp")->set_default_option("esp8266_at");
 }
 
 
