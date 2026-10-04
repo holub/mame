@@ -9,6 +9,7 @@
 #include "emu.h"
 #include "com.h"
 
+#include "bus/rs232/esp8266_at.h"
 #include "bus/rs232/hlemouse.h"
 #include "bus/rs232/null_modem.h"
 #include "bus/rs232/rs232.h"
@@ -30,6 +31,7 @@ static void isa_com(device_slot_interface &device)
 	device.option_add("terminal",        SERIAL_TERMINAL);
 	device.option_add("null_modem",      NULL_MODEM);
 	device.option_add("sun_kbd",         SUN_KBD_ADAPTOR);
+	device.option_add("esp8266_at",      ESP8266_AT);
 }
 
 
