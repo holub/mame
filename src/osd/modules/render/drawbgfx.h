@@ -49,6 +49,7 @@ public:
 	virtual void add_audio_to_recording(const int16_t *buffer, int samples_this_frame) override;
 	virtual std::vector<ui::menu_item> get_slider_list() override;
 	virtual bool set_effect_chain(uint32_t screen, const std::string &chain_name) override;
+	virtual uint32_t screen_chain_count() const override;
 	virtual void set_sliders_dirty() override;
 
 #ifdef OSD_SDL
