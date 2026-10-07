@@ -1503,6 +1503,20 @@ void running_machine::emscripten_main_loop()
 		s_was_fastforward = fastforward;
 	}
 
+	// machine pause freezes sample production while the sink keeps
+	// consuming; tell it so the drain is not reported as underruns
+	{
+		static bool s_was_paused = false;
+		if (s_was_paused != machine->m_paused)
+		{
+			s_was_paused = machine->m_paused;
+			EM_ASM(
+				if (typeof window !== "undefined" && typeof window.jsmame_audio_set_paused == "function")
+					window.jsmame_audio_set_paused($0);
+			, int(s_was_paused));
+		}
+	}
+
 	// cassette tape-load watch: stop and restore speed when loading ends
 	if (s_emscripten_tape_ff && !machine->m_paused)
 		emscripten_check_tape_end();
@@ -1640,6 +1654,20 @@ void running_machine::emscripten_set_fastforward(int ffwd)
 		return;
 	video_manager &video = *emscripten_running_machine->m_video;
 	video.set_frameskip(ffwd ? (FRAMESKIP_LEVELS - 1) : 0);
+}
+
+int running_machine::emscripten_set_paused(int paused)
+{
+	// machine pause, not main-loop pause: the emscripten loop keeps
+	// pumping frame_update() so the page still repaints while the
+	// scheduler freezes and the pause notifiers spin sound down
+	if (!emscripten_running_machine)
+		return 0;
+	if (paused)
+		emscripten_running_machine->pause();
+	else
+		emscripten_running_machine->resume();
+	return emscripten_running_machine->paused() ? 1 : 0;
 }
 
 // ---- cassette loading control (what the F2 UI keys drive underneath) ----

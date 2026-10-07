@@ -368,6 +368,7 @@ public:
 	static void emscripten_resize_window(int width, int height);
 	static void emscripten_set_keepaspect(int keepaspect);
 	static void emscripten_set_fastforward(int ffwd);
+	static int emscripten_set_paused(int paused);
 	static int emscripten_cassette_toggle();
 #endif
 };

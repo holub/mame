@@ -7,6 +7,7 @@ JSMAME.set_bgfx_chain = function () { return Module.cwrap('_ZN15running_machine2
 JSMAME.resize_window = function () { return Module.cwrap('_ZN15running_machine24emscripten_resize_windowEii', '', ['number', 'number']).apply(null, arguments); };
 JSMAME.set_keepaspect = function () { return Module.cwrap('_ZN15running_machine25emscripten_set_keepaspectEi', '', ['number']).apply(null, arguments); };
 JSMAME.set_fastforward = function () { return Module.cwrap('_ZN15running_machine26emscripten_set_fastforwardEi', '', ['number']).apply(null, arguments); };
+JSMAME.set_paused = function () { return Module.cwrap('_ZN15running_machine21emscripten_set_pausedEi', 'number', ['number']).apply(null, arguments); };
 JSMAME.cassette_toggle = function () { return Module.cwrap('_ZN15running_machine26emscripten_cassette_toggleEv', 'number', []).apply(null, arguments); };
 JSMAME.ui_set_show_fps = function () { return Module.cwrap('_ZN15mame_ui_manager12set_show_fpsEb', '', ['number', 'number']).apply(null, arguments); };
 JSMAME.ui_get_show_fps = function () { return Module.cwrap('_ZNK15mame_ui_manager8show_fpsEv', 'number', ['number']).apply(null, arguments); };
