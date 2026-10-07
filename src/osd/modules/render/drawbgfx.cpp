@@ -1775,6 +1775,13 @@ bool renderer_bgfx::set_effect_chain(uint32_t screen, const std::string &chain_n
 	return false;
 }
 
+uint32_t renderer_bgfx::screen_chain_count() const
+{
+	// counts real screens once frames have rendered; 0 only before the
+	// first draw, where callers treat it as "screen 0 only"
+	return m_chains ? m_chains->screen_count() : 0;
+}
+
 void renderer_bgfx::set_sliders_dirty()
 {
 	m_sliders_dirty = true;

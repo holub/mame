@@ -651,13 +651,19 @@ std::vector<ui::menu_item> osd_common_t::get_slider_list()
 
 bool osd_common_t::set_bgfx_screen_chain(const std::string &chain_name)
 {
+	bool any = false;
 	for (const auto &window : window_list())
 	{
-		if (window->has_renderer() && window->renderer().set_effect_chain(0, chain_name))
-			return true;
+		if (!window->has_renderer())
+			continue;
+		// every screen of the window (dual-screen machines like punchout
+		// render several screen textures through one chain manager)
+		uint32_t const screens = std::max(1u, window->renderer().screen_chain_count());
+		for (uint32_t screen = 0; screen < screens; screen++)
+			any |= window->renderer().set_effect_chain(screen, chain_name);
 	}
 
-	return false;
+	return any;
 }
 
 
