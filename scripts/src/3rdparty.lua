@@ -1921,7 +1921,7 @@ project "residfp"
 		MAME_DIR .. "3rdparty/residfp",
 	}
 
-	if _OPTIONS["gcc"]~=nil and string.find(_OPTIONS["gcc"], "clang") then
+	if _OPTIONS["gcc"]~=nil and string.find(_OPTIONS["gcc"], "clang") or string.find(_OPTIONS["gcc"], "asmjs") then
 		configuration { "gmake or ninja or jcdb" }
 			buildoptions_cpp {
 				"-Wno-mismatched-tags",
