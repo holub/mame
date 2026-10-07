@@ -42,6 +42,7 @@ var droppedCount = 0;
 var watchDogDateLast = null;
 var watchDogTimerEvent = null;
 var padRun = 0;
+var paused = false;
 var ffActive = false;
 var lastKeyAt = 0;
 if (typeof window !== "undefined")
@@ -75,6 +76,7 @@ class MAMERingProcessor extends AudioWorkletProcessor {
 		this.lastR = 0;
 		this.padRun = 0;
 		this.ff = false;
+		this.paused = false;
 		this.underruns = 0;
 		this.dropped = 0;
 		this.padFrames = 0;
@@ -82,6 +84,10 @@ class MAMERingProcessor extends AudioWorkletProcessor {
 			var d = e.data;
 			if (d.cmd === "ff") {
 				this.ff = d.on;
+				return;
+			}
+			if (d.cmd === "paused") {
+				this.paused = d.on;
 				return;
 			}
 			if (d.cmd === "trim") {
@@ -131,7 +137,8 @@ class MAMERingProcessor extends AudioWorkletProcessor {
 		if (index < quantum) {
 			// brief fade of the last frame, then hard silence (see the
 			// script-processor pad above for why the decay must be short)
-			this.underruns++;
+			if (!this.paused)
+				this.underruns++;
 			while (index < quantum) {
 				var scale = this.padRun < 192 ? (1 - this.padRun / 192) : 0;
 				left[index] = this.lastL * scale;
@@ -181,6 +188,9 @@ function init_worklet() {
 			};
 			workletNode.connect(gain_node);
 			workletReady = true;
+			// a pause requested before the node existed would otherwise
+			// be lost on this thread
+			workletNode.port.postMessage({ cmd: "paused", on: paused });
 			// hand playback over now: do this here, not from the
 			// script processor's own callback — Firefox stops
 			// delivering onaudioprocess entirely (the bug its watchdog
@@ -386,7 +396,8 @@ function tick (event) {
 		// brief linear fade of the last played frame, then hard silence:
 		// the browser delivers backlogged quanta in one batch under load
 		// and any longer decay of the last sample is audible as a loop
-		underrunCount++;
+		if (!paused)
+			underrunCount++;
 		while (index < quantum) {
 			var scale = padRun < 192 ? (1 - padRun / 192) : 0;
 			buffers[0][index] = lastL * scale;
@@ -475,6 +486,14 @@ function set_fastforward (on) {
 	ffActive = !!on;
 };
 
+// deliberate machine pause: the ring draining then is not an underrun,
+// so both sinks stop counting while this is set
+function set_paused (on) {
+	paused = !!on;
+	if (workletNode && workletNode.port)
+		workletNode.port.postMessage({ cmd: "paused", on: paused });
+};
+
 return {
 	stream_sink_update: stream_sink_update,
 	get_sample_rate: get_sample_rate,
@@ -482,7 +501,8 @@ return {
 	target_ms: target_ms,
 	trim_to_target: trim_to_target,
 	audio_stats: audio_stats,
-	set_fastforward: set_fastforward
+	set_fastforward: set_fastforward,
+	set_paused: set_paused
 };
 
 })();
@@ -495,4 +515,5 @@ if (typeof window !== "undefined") {
 	window.jsmame_audio_trim = jsmame_web_audio.trim_to_target;
 	window.jsmame_audio_stats = jsmame_web_audio.audio_stats;
 	window.jsmame_audio_set_ff = jsmame_web_audio.set_fastforward;
+	window.jsmame_audio_set_paused = jsmame_web_audio.set_paused;
 }
