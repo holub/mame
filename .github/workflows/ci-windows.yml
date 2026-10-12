@@ -74,6 +74,20 @@ jobs:
       continue-on-error: true
       run: |
         [ -d build/generated/mame/layout ] && cd build/generated/mame/layout && touch *.lh
+    - name: Patch debugger windows (no Per-Monitor DPI on Windows XP)
+      run: |
+        # 'DPI' missing in Windows XP
+        sed -bi "s/top + MulDiv(100, xdpi/top + MulDiv(100, ydpi/g" src/osd/modules/debugger/debugwin.cpp
+        sed -bi "s/GetDpiForMonitor(/\/\/GetDpiForMonitor(/g" src/osd/modules/debugger/debugwin.cpp
+        sed -bi "s/AdjustWindowRectExForDpi(&target, GetWindowLong(window, GWL_STYLE), GetMenu(window) ? TRUE : FALSE, GetWindowLong(window, GWL_EXSTYLE), GetDpiForWindow(window))/AdjustWindowRectEx(\&target, GetWindowLong(window, GWL_STYLE), GetMenu(window) ? TRUE : FALSE, GetWindowLong(window, GWL_EXSTYLE))/g" src/osd/modules/debugger/debugwin.cpp
+        sed -bi "s/AdjustWindowRectExForDpi(&bounds, DEBUG_WINDOW_STYLE, FALSE, DEBUG_WINDOW_STYLE_EX, metrics().dpi())/AdjustWindowRectEx(\&bounds, DEBUG_WINDOW_STYLE, FALSE, DEBUG_WINDOW_STYLE_EX)/g" src/osd/modules/debugger/win/consolewininfo.cpp
+        sed -bi "s/GetDpiForWindow(m_wnd)/96/g" src/osd/modules/debugger/win/debugwininfo.cpp
+        sed -bi "s/AdjustWindowRectExForDpi(\(.*\), *metrics().dpi())/AdjustWindowRectEx(\1)/g" src/osd/modules/debugger/win/debugwininfo.cpp
+        sed -bi "s/AdjustWindowRectExForDpi(&bounds, DEBUG_WINDOW_STYLE, FALSE, DEBUG_WINDOW_STYLE_EX, metrics().dpi())/AdjustWindowRectEx(\&bounds, DEBUG_WINDOW_STYLE, FALSE, DEBUG_WINDOW_STYLE_EX)/g" src/osd/modules/debugger/win/disasmwininfo.cpp
+        sed -bi "s/AdjustWindowRectExForDpi(&bounds, DEBUG_WINDOW_STYLE, FALSE, DEBUG_WINDOW_STYLE_EX, metrics().dpi())/AdjustWindowRectEx(\&bounds, DEBUG_WINDOW_STYLE, FALSE, DEBUG_WINDOW_STYLE_EX)/g" src/osd/modules/debugger/win/logwininfo.cpp
+        sed -bi "s/AdjustWindowRectExForDpi(&bounds, DEBUG_WINDOW_STYLE, FALSE, DEBUG_WINDOW_STYLE_EX, metrics().dpi())/AdjustWindowRectEx(\&bounds, DEBUG_WINDOW_STYLE, FALSE, DEBUG_WINDOW_STYLE_EX)/g" src/osd/modules/debugger/win/memorywininfo.cpp
+        sed -bi "s/AdjustWindowRectExForDpi(&bounds, DEBUG_WINDOW_STYLE, FALSE, DEBUG_WINDOW_STYLE_EX, metrics().dpi())/AdjustWindowRectEx(\&bounds, DEBUG_WINDOW_STYLE, FALSE, DEBUG_WINDOW_STYLE_EX)/g" src/osd/modules/debugger/win/pointswininfo.cpp
+        sed -bi "s/GetSystemMetricsForDpi(SM_C\(..\)SCROLL, dpi)/GetSystemMetrics(SM_C\1SCROLL)/g" src/osd/modules/debugger/win/uimetrics.cpp
     - name: Build
       env:
         OVERRIDE_AR: "llvm-ar"
