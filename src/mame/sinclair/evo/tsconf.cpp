@@ -199,6 +199,10 @@ void tsconf_state::machine_start()
 	save_item(NAME(m_port_f7_ext));
 	save_item(NAME(m_gfx_y_frame_offset));
 
+	save_item(NAME(m_ft_di));
+	save_item(NAME(m_ft_cs));
+	save_item(NAME(m_ft_int));
+	save_item(NAME(m_ft_int_old));
 	// tsconf2
 	save_item(NAME(m_copper_ready));
 }
@@ -389,6 +393,10 @@ void tsconf_state::tsconf2(machine_config &config)
 	m_copper->out_int_cb().set(FUNC(tsconf_state::copper_int_w));
 	m_copper->out_rdy_cb().set(FUNC(tsconf_state::copper_rdy_w));
 	m_copper->set_in_until_pos_cb(FUNC(tsconf_state::copper_until_pos_r));
+
+	FT812(config, m_ft812, 0);
+	m_ft812->spi_miso_callback().set(FUNC(tsconf_state::ft812_spi_miso_w));
+	m_ft812->int_callback().set([this](int state) { m_ft_int = bool(state); });
 
 	m_dma->on_ready_callback().append(m_copper, FUNC(tsconf_copper_device::dma_ready_w));
 }

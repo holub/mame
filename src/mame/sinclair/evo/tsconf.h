@@ -14,6 +14,7 @@
 
 #include "glukrs.h"
 #include "tsconf_beta.h"
+#include "ft812.h"
 #include "tsconf_copper.h"
 #include "tsconf_dma.h"
 #include "tsconf_rs232.h"
@@ -39,6 +40,7 @@ public:
 		, m_beta(*this, "beta")
 		, m_dma(*this, "dma")
 		, m_sdcard(*this, "sdcard")
+		, m_ft812(*this, "ft812")
 		, m_uart(*this, "uart")
 		, m_glukrs(*this, "glukrs")
 		, m_palette(*this, "palette")
@@ -226,6 +228,7 @@ private:
 	std::map<tsconf_regs, u8> m_scanline_delayed_regs_update;
 	u8 m_regs[0x100];
 	bool m_copper_ready;
+	bool m_pwr_up = true;  // cleared after first V_CONFIG status read (zports.v pwr_up_reg)
 
 	memory_view m_io_shadow_view;
 	memory_view m_bank0_rom;
@@ -240,9 +243,15 @@ private:
 	required_device<tsconf_beta_device> m_beta;
 	required_device<tsconfdma_device> m_dma;
 	required_device<spi_sdcard_device> m_sdcard;
+	optional_device<class ft812_device> m_ft812; // VDAC2 board (FT812) presence selects the richer palette
 	required_device<tsconf_rs232_device> m_uart;
 	u8 m_zctl_di = 0;
 	u8 m_zctl_cs = 0;
+	u8 m_ft_di = 0;
+	u8 m_ft_cs = 0;
+	bool m_ft_int = false;
+	bool m_ft_int_old = false;
+	void ft812_spi_miso_w(u8 data);
 
 	required_device<glukrs_device> m_glukrs;
 	gluk_ext m_port_f7_ext{};
