@@ -29,17 +29,6 @@ enum v_mode : u8
 	VM_TXT
 };
 
-// https://github.com/tslabs/zx-evo/blob/master/pentevo/vdac/vdac1/cpld/top.v
-static constexpr u8 pwm_to_rgb[32] = {
-	0, 10, 21, 31, 42, 53, 63, 74,
-	85, 95, 106, 117, 127, 138, 149, 159,
-	170, 181, 191, 202, 213, 223, 234, 245,
-	255, 255, 255, 255, 255, 255, 255, 255};
-
-static constexpr rgb_t from_pwm(u16 pwm15)
-{
-	return rgb_t(pwm_to_rgb[BIT(pwm15, 10, 5)], pwm_to_rgb[BIT(pwm15, 5, 5)], pwm_to_rgb[BIT(pwm15, 0, 5)]);
-}
 
 rectangle tsconf_state::get_screen_area()
 {
@@ -411,7 +400,6 @@ u8 tsconf_state::ram_bank_read(u8 bank, offs_t offset)
 			m_maincpu->adjust_icount(-2);
 		}
 	}
-
 	return reinterpret_cast<u8 *>(m_bank_ram[bank]->base())[offset];
 }
 
@@ -421,27 +409,24 @@ void tsconf_state::ram_bank_write(u8 bank, offs_t offset, u8 data)
 	if (cpu_hi_addr == m_cache_line_addr)
 		m_cache_line_addr = -1; // invalidate cache line
 
-	if (BIT(m_regs[FMAPS], 4))
+	if (BIT(m_regs[FMAPS], 4) && ((bank << 2) | (offset >> 12)) == BIT(m_regs[FMAPS], 0, 4))
 	{
-		offs_t machine_addr = PAGE4K(bank) + offset;
-		offs_t fmap_addr = BIT(m_regs[FMAPS], 0, 4) << 12;
-		if ((machine_addr >= fmap_addr) && (machine_addr < (fmap_addr + 0x800)))
+		// fmap window is decoded on Z80 address bits [15:12] (see FPGA z80/zmaps.v),
+		// not on the machine address within each mapped page
+		const u16 addr_w = offset & 0xfff;
+		if (addr_w < 0x200)
+			cram_write(addr_w, data);
+		else if (addr_w < 0x400)
 		{
-			u16 addr_w = machine_addr - fmap_addr;
-			if (addr_w < 0x200)
-				cram_write(addr_w, data);
-			else if (addr_w < 0x400)
-			{
-				m_sprites_cache.clear();
-				m_sfile->write(addr_w - 0x200, data);
-			}
-			else if (addr_w < 0x500)
-				tsconf_port_xxaf_w((addr_w - 0x400) << 8, data);
-			else if (addr_w < 0x600)
-				; // reserved
-			else if (m_copper != nullptr)
-				m_copper->cl_data_w(addr_w - 0x600, data);
+			m_sprites_cache.clear();
+			m_sfile->write(addr_w - 0x200, data);
 		}
+		else if (addr_w < 0x500)
+			tsconf_port_xxaf_w((addr_w - 0x400) << 8, data);
+		else if (addr_w < 0x600)
+			; // reserved
+		else if (m_copper != nullptr)
+			m_copper->cl_data_w(addr_w - 0x600, data);
 	}
 
 	if (bank > 0 || W0_WE)
@@ -458,6 +443,7 @@ static int tiles_offset_to_raw(int t_offset)
 void tsconf_state::ram_page_write(u8 page, offs_t offset, u8 data)
 {
 	u32 ram_addr = PAGE4K(page) + offset;
+
 	if (ram_addr >= PAGE4K(m_regs[T_MAP_PAGE]) && ram_addr < (PAGE4K(m_regs[T_MAP_PAGE] + 1)))
 	{
 		// TODO invalidate sprites, not entire map
@@ -532,7 +518,7 @@ void tsconf_state::cram_write(u16 offset, u8 data)
 	u16 dest = offset & 0x1ff;
 	m_cram->write(dest, data);
 	u8 pen = dest >> 1;
-	rgb_t rgb = from_pwm((m_cram->read(dest | 1) << 8 | m_cram->read(dest & 0x1fe)));
+	rgb_t rgb = m_vout->ts_palette_color(u16(m_cram->read(dest | 1) << 8 | m_cram->read(dest & 0x1fe)));
 	m_palette->set_pen_color(pen, rgb);
 }
 
@@ -541,6 +527,7 @@ void tsconf_state::cram_write16(offs_t offset, u16 data)
 	cram_write(offset & 0x1fe, data >> 8);
 	cram_write(offset | 1, data & 0xff);
 }
+
 
 void tsconf_state::sfile_write16(offs_t offset, u16 data)
 {
@@ -604,9 +591,12 @@ u8 tsconf_state::tsconf_port_xxaf_r(offs_t port)
 	switch (nreg)
 	{
 	case V_CONFIG: // { COPPER_RDY, PWR_UP, !FDRVER, 2'b0, VDAC_VER }
-		data = 0b01000011 | (m_copper_ready ? 0x80 : 0x00);
+		data = (m_pwr_up ? 0x40 : 0x00) | 0x07 | (m_copper_ready ? 0x80 : 0x00); // {COPPER_RDY, PWR_UP, FDR_VER, 2'b0, VDAC_VER=111b}
 		if (!machine().side_effects_disabled())
+		{
 			m_copper_ready = false; // RDY flag is cleared on read
+			m_pwr_up = false;       // pwr_up_reg cleared after first status read (zports.v)
+		}
 		break;
 
 	case PAGE2:
@@ -650,7 +640,7 @@ void tsconf_state::copy_tiles_to_raw(const u8 *tiles_src, u8 *raw_target)
 void tsconf_state::tsconf_port_xxaf_w(offs_t port, u8 data)
 {
 	u8 nreg = port >> 8;
-
+	// (page register writes take effect at the next scanline, see below)
 	// 1. Updates which effect is delayed till next scanline
 	bool delay_update = true;
 	switch (nreg)
@@ -807,6 +797,7 @@ void tsconf_state::tsconf_port_xxaf_w(offs_t port, u8 data)
 	case FMAPS:
 	case TS_CONFIG:
 	case INT_MASK:
+		[[fallthrough]];
 	case CACHE_CONFIG:
 		break;
 
@@ -883,6 +874,8 @@ void tsconf_state::tsconf_port_77_zctr_w(u8 data)
 {
 	m_sdcard->spi_ss_w(BIT(data, 0));
 	m_zctl_cs = BIT(data, 1);
+	m_vout->spi_ss_w(BIT(data, 2));
+	m_ft_cs = BIT(data, 2) && m_vout->spi_present();
 }
 
 u8 tsconf_state::tsconf_port_77_zctr_r()
@@ -893,7 +886,11 @@ u8 tsconf_state::tsconf_port_77_zctr_r()
 
 void tsconf_state::tsconf_port_57_zctr_w(u8 data)
 {
-	if (!m_zctl_cs)
+	if (m_ft_cs)
+	{
+		m_vout->spi_byte_w(data);
+	}
+	else if (!m_zctl_cs)
 	{
 		for (u8 m = 0x80; m; m >>= 1)
 		{
@@ -906,12 +903,22 @@ void tsconf_state::tsconf_port_57_zctr_w(u8 data)
 
 u8 tsconf_state::tsconf_port_57_zctr_r()
 {
-	if (m_zctl_cs)
-		return 0xff;
+	u8 data;
 
-	u8 data = m_zctl_di;
-	if (!machine().side_effects_disabled())
-		tsconf_port_57_zctr_w(0xff);
+	if (m_ft_cs)
+	{
+		data = m_ft_di;
+		if (!machine().side_effects_disabled())
+			tsconf_port_57_zctr_w(0xff);
+	}
+	else if (m_zctl_cs)
+		return 0xff;
+	else
+	{
+		data = m_zctl_di;
+		if (!machine().side_effects_disabled())
+			tsconf_port_57_zctr_w(0xff);
+	}
 
 	return data;
 }
@@ -920,6 +927,12 @@ void tsconf_state::tsconf_spi_miso_w(u8 data)
 {
 	m_zctl_di <<= 1;
 	m_zctl_di |= data;
+}
+
+void tsconf_state::ft812_spi_miso_w(u8 data)
+{
+	m_ft_di <<= 1;
+	m_ft_di |= data;
 }
 
 IRQ_CALLBACK_MEMBER(tsconf_state::irq_vector)
@@ -1040,7 +1053,15 @@ TIMER_CALLBACK_MEMBER(tsconf_state::irq_frame)
 
 TIMER_CALLBACK_MEMBER(tsconf_state::irq_scanline)
 {
-	if (BIT(m_regs[INT_MASK], 1) && !(m_beta->vdos_r() || m_update_on_m1))
+	// VDAC2: when FT812 video output is selected the line interrupt is driven
+	// by the FT812 INT edge instead of the scanline event (cf. unreal ts_line_int)
+	bool line_pend = true;
+	if (BIT(m_regs[V_CONFIG], 2)) // VID_FT812
+	{
+		line_pend = m_ft_int && !m_ft_int_old;
+		m_ft_int_old = m_ft_int;
+	}
+	if (BIT(m_regs[INT_MASK], 1) && line_pend && !(m_beta->vdos_r() || m_update_on_m1))
 	{
 		m_maincpu->set_input_line(INPUT_LINE_IRQ0, ASSERT_LINE);
 		m_int_mask |= 2;
@@ -1056,8 +1077,8 @@ TIMER_CALLBACK_MEMBER(tsconf_state::irq_scanline)
 		switch (reg)
 		{
 		case V_CONFIG:
-		case V_PAGE:
 			tsconf_update_video_mode();
+			m_vout->select_output(BIT(m_regs[V_CONFIG], 2)); // VID_FT812
 			break;
 
 		case G_Y_OFFS_L:
