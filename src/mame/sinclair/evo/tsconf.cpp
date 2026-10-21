@@ -42,6 +42,7 @@ FAQ-RUS: https://forum.tslabs.info/viewtopic.php?f=35&t=157
 #include "bus/spectrum/zxbus/bus.h"
 #include "cpu/z80/z80.h"
 #include "speaker.h"
+#include "tsconf_vout_cards.h"
 
 
 ALLOW_SAVE_TYPE(tsconf_state::gluk_ext);
@@ -200,6 +201,10 @@ void tsconf_state::machine_start()
 	save_item(NAME(m_port_f7_ext));
 	save_item(NAME(m_gfx_y_frame_offset));
 
+	save_item(NAME(m_ft_di));
+	save_item(NAME(m_ft_cs));
+	save_item(NAME(m_ft_int));
+	save_item(NAME(m_ft_int_old));
 	// tsconf2
 	save_item(NAME(m_copper_ready));
 }
@@ -250,6 +255,7 @@ void tsconf_state::machine_reset()
 	m_sprites_cache.clear();
 	tsconf_update_bank0();
 	tsconf_update_video_mode();
+	m_vout->select_output(false); // reset drops the VDAC2 output switch (V_CONFIG is cleared)
 
 	m_keyboard->write(0xff);
 	while (m_keyboard->read() != 0) { /* invalidate buffer */ }
@@ -321,8 +327,7 @@ void tsconf_state::tsconf(machine_config &config)
 	m_maincpu->set_io_map(&tsconf_state::tsconf_io);
 	m_maincpu->set_m1_map(&tsconf_state::tsconf_switch);
 	m_maincpu->set_irq_acknowledge_callback(FUNC(tsconf_state::irq_vector));
-
-	m_maincpu->set_vblank_int("screen", FUNC(tsconf_state::tsconf_vblank_interrupt));
+	m_maincpu->set_vblank_int("vout:screen", FUNC(tsconf_state::tsconf_vblank_interrupt));
 
 	SPI_SDCARD(config, m_sdcard, 0);
 	m_sdcard->set_prefer_sdhc();
@@ -367,10 +372,16 @@ void tsconf_state::tsconf(machine_config &config)
 
 	DAC_8BIT_R2R(config, m_dac, 0).add_route(ALL_OUTPUTS, "speakers", 0.75);
 
-	PALETTE(config, "palette", palette_device::BLACK, 256);
-	m_screen->set_raw(14_MHz_XTAL, 448 << 1, with_hblank(0) << 1, 448 << 1, 320, with_vblank(0), 320);
-	m_screen->set_screen_update(FUNC(tsconf_state::screen_update));
-	m_screen->set_no_palette();
+	// the vout slot owns the machine screen (rgb default; the VDAC2/FT812
+	// board is a runtime-selectable card); keep the inherited screen finder on it
+	m_screen.set_tag("vout:screen");
+	config.device_remove("screen");
+	VOUT_SLOT(config, m_vout, 0, default_vout_devices, "rgb");
+	m_vout->set_ts_raw((14_MHz_XTAL).value(), 448 << 1, with_hblank(0) << 1, 448 << 1, 320, with_vblank(0), 320);
+	m_vout->set_ts_screen_update(FUNC(tsconf_state::screen_update));
+	m_vout->spi_miso_callback().set(FUNC(tsconf_state::ft812_spi_miso_w));
+	m_vout->int_callback().set([this](int state) { m_ft_int = bool(state); });
+	subdevice<gfxdecode_device>("gfxdecode")->set_palette("vout:palette");
 
 	subdevice<gfxdecode_device>("gfxdecode")->set_info(gfx_tsconf);
 	SPECTRUM_ULA_UNCONTENDED(config.replace(), m_ula);
