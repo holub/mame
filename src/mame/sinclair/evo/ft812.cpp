@@ -994,8 +994,8 @@ void ft812_device::draw_bitmap(s32 x, s32 y)
 	const u32 fmt = (m_ctx.bitmap_layout >> 19) & 0x1f;
 	const u32 stride = ((m_ctx.bitmap_layout >> 9) & 0x3ff) | (((m_ctx.bitmap_layout_h >> 2) & 3) << 10);
 	const u32 lines = (m_ctx.bitmap_layout & 0x1ff) | ((m_ctx.bitmap_layout_h & 3) << 9);
-	u32 w = ((m_ctx.bitmap_size >> 9) & 0x1ff) | (((m_ctx.bitmap_size_h >> 2) & 3) << 9);
-	u32 h = (m_ctx.bitmap_size & 0x1ff) | ((m_ctx.bitmap_size_h & 3) << 9);
+	const u32 w = ((m_ctx.bitmap_size >> 9) & 0x1ff) | (((m_ctx.bitmap_size_h >> 2) & 3) << 9);
+	const u32 h = (m_ctx.bitmap_size & 0x1ff) | ((m_ctx.bitmap_size_h & 3) << 9);
 	if (!stride || !lines || !w || !h)
 		return;
 
@@ -1017,9 +1017,10 @@ void ft812_device::draw_bitmap(s32 x, s32 y)
 		row_width *= 8;
 		break;
 	}
-	// Keep transformed draws within the source allocation when size exceeds stride/lines.
-	w = std::min(w, row_width);
-	h = std::min(h, lines);
+	const u32 source_width = std::min(w, row_width);
+	const u32 source_height = std::min(h, lines);
+	if (!source_width || !source_height)
+		return;
 
 	const u32 src = m_ctx.bitmap_source + u32(m_ctx.cell) * stride * lines;
 	const double a = double(m_ctx.bitmap_transform_a) / 256.0;
@@ -1032,6 +1033,7 @@ void ft812_device::draw_bitmap(s32 x, s32 y)
 	if (std::abs(det) < 1.0e-12)
 		return;
 
+	// FT812 coefficients map destination coordinates to bitmap coordinates.
 	auto inverse = [a, b, c, d, e, f, det](double u, double v)
 	{
 		u -= e;
@@ -1039,13 +1041,13 @@ void ft812_device::draw_bitmap(s32 x, s32 y)
 		return std::pair<double, double>((d * u - c * v) / det, (a * v - b * u) / det);
 	};
 
-	auto transform = [a, b, c, d, e, f](double u, double v)
+	auto transform = [a, b, c, d, e, f](double x, double y)
 	{
-		return std::pair<double, double>(a * u + c * v + e, b * u + d * v + f);
+		return std::pair<double, double>(a * x + c * y + e, b * x + d * y + f);
 	};
 
 	const std::pair<double, double> corners[] = {
-		transform(0, 0), transform(w, 0), transform(0, h), transform(w, h)
+		inverse(0, 0), inverse(source_width, 0), inverse(0, source_height), inverse(source_width, source_height)
 	};
 	double min_x = corners[0].first, max_x = corners[0].first;
 	double min_y = corners[0].second, max_y = corners[0].second;
@@ -1072,8 +1074,8 @@ void ft812_device::draw_bitmap(s32 x, s32 y)
 		{
 			const double px = double(dx - x) + 0.5;
 			const double py = double(dy - y) + 0.5;
-			const auto [u, v] = inverse(px, py);
-			draw_px(dx, dy, bitmap_sample(src, fmt, u - 0.5, v - 0.5, stride, lines, w, h));
+			const auto [u, v] = transform(px, py);
+			draw_px(dx, dy, bitmap_sample(src, fmt, u - 0.5, v - 0.5, stride, lines, source_width, source_height));
 		}
 	}
 }
@@ -1506,16 +1508,32 @@ void ft812_device::copro_execute()
 			}
 			case 0x2a: // CMD_SETMATRIX
 			{
+				const double a = m_copro_matrix[0], b = m_copro_matrix[1];
+				const double c = m_copro_matrix[2], d = m_copro_matrix[3];
+				const double e = m_copro_matrix[4], f = m_copro_matrix[5];
+				const double det = a * d - b * c;
+				if (std::abs(det) < 1.0e-12)
+				{
+					LOGMASKED(LOG_WARN, "%s: CMD_SETMATRIX ignored for singular matrix\n", tag());
+					break;
+				}
 				auto encode = [](double value, s32 min_value, s32 max_value)
 				{
-					return s32(std::round(std::clamp(value * 256.0, double(min_value), double(max_value))));
+					return s32(std::clamp(value * 256.0, double(min_value), double(max_value)));
 				};
-				append_dl(DL_BITMAP_TRANSFORM_A | (u32(encode(m_copro_matrix[0], -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
-				append_dl(DL_BITMAP_TRANSFORM_B | (u32(encode(m_copro_matrix[1], -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
-				append_dl(DL_BITMAP_TRANSFORM_C | (u32(encode(m_copro_matrix[2], -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
-				append_dl(DL_BITMAP_TRANSFORM_D | (u32(encode(m_copro_matrix[3], -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
-				append_dl(DL_BITMAP_TRANSFORM_E | (u32(encode(m_copro_matrix[4], -(1 << 23), (1 << 23) - 1)) & 0x00ffffff));
-				append_dl(DL_BITMAP_TRANSFORM_F | (u32(encode(m_copro_matrix[5], -(1 << 23), (1 << 23) - 1)) & 0x00ffffff));
+				const double inv_det = 1.0 / det;
+				const double bitmap_a = d * inv_det;
+				const double bitmap_b = -b * inv_det;
+				const double bitmap_c = -c * inv_det;
+				const double bitmap_d = a * inv_det;
+				const double bitmap_e = (c * f - d * e) * inv_det;
+				const double bitmap_f = (b * e - a * f) * inv_det;
+				append_dl(DL_BITMAP_TRANSFORM_A | (u32(encode(bitmap_a, -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
+				append_dl(DL_BITMAP_TRANSFORM_B | (u32(encode(bitmap_b, -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
+				append_dl(DL_BITMAP_TRANSFORM_C | (u32(encode(bitmap_c, -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
+				append_dl(DL_BITMAP_TRANSFORM_D | (u32(encode(bitmap_d, -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
+				append_dl(DL_BITMAP_TRANSFORM_E | (u32(encode(bitmap_e, -(1 << 23), (1 << 23) - 1)) & 0x00ffffff));
+				append_dl(DL_BITMAP_TRANSFORM_F | (u32(encode(bitmap_f, -(1 << 23), (1 << 23) - 1)) & 0x00ffffff));
 				break;
 			}
 			default:
