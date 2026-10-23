@@ -105,6 +105,14 @@ void ft812_device::device_start()
 	save_item(NAME(m_frames));
 	save_item(NAME(m_copro_fgcolor));
 	save_item(NAME(m_copro_matrix));
+	save_item(STRUCT_MEMBER(m_bitmap_state, source));
+	save_item(STRUCT_MEMBER(m_bitmap_state, layout));
+	save_item(STRUCT_MEMBER(m_bitmap_state, size));
+	save_item(STRUCT_MEMBER(m_bitmap_state, layout_h));
+	save_item(STRUCT_MEMBER(m_bitmap_state, size_h));
+	save_item(STRUCT_MEMBER(m_bitmap_state, filter));
+	save_item(STRUCT_MEMBER(m_bitmap_state, wrap_x));
+	save_item(STRUCT_MEMBER(m_bitmap_state, wrap_y));
 	save_item(NAME(m_prim));
 	save_item(NAME(m_last_x));
 	save_item(NAME(m_last_y));
@@ -654,16 +662,17 @@ u32 ft812_device::bitmap_pixel(u32 byte_addr, u32 fmt, s32 u, s32 v, u32 stride,
 	}
 }
 
-u32 ft812_device::bitmap_sample(u32 byte_addr, u32 fmt, double u, double v, u32 stride, u32 lines, u32 width, u32 height)
+u32 ft812_device::bitmap_sample(u32 byte_addr, u32 fmt, double u, double v, u32 stride, u32 lines, u32 width, u32 height,
+		u8 wrap_x, u8 wrap_y, u8 filter)
 {
-	auto texel = [this, byte_addr, fmt, stride, lines, width, height](s32 x, s32 y)
+	auto texel = [this, byte_addr, fmt, stride, lines, width, height, wrap_x, wrap_y](s32 x, s32 y)
 	{
-		if (m_ctx.bitmap_wrap_x)
+		if (wrap_x)
 			x = (x % s32(width) + s32(width)) % s32(width);
 		else if (x < 0 || x >= s32(width))
 			return 0U;
 
-		if (m_ctx.bitmap_wrap_y)
+		if (wrap_y)
 			y = (y % s32(height) + s32(height)) % s32(height);
 		else if (y < 0 || y >= s32(height))
 			return 0U;
@@ -671,7 +680,7 @@ u32 ft812_device::bitmap_sample(u32 byte_addr, u32 fmt, double u, double v, u32 
 		return bitmap_pixel(byte_addr, fmt, x, y, stride, lines);
 	};
 
-	if (!m_ctx.bitmap_filter)
+	if (!filter)
 		return texel(s32(std::floor(u + 0.5)), s32(std::floor(v + 0.5)));
 
 	const s32 x0 = s32(std::floor(u)), y0 = s32(std::floor(v));
@@ -940,12 +949,11 @@ bool ft812_device::rom_font_desc(u32 font, u32 &fmt, u32 &stride, u32 &w, u32 &h
 	return (fmt == FMT_L1 || fmt == FMT_L4) && stride && w && h && gfx >= 0x1e0000 && gfx < 0x300000;
 }
 
-void ft812_device::draw_rom_font(s32 x, s32 y)
+void ft812_device::draw_rom_font(s32 x, s32 y, u8 handle, u8 cell)
 {
 	u32 fmt, stride, w, h, gfx;
-	if (!rom_font_desc(m_ctx.bitmap_handle, fmt, stride, w, h, gfx))
+	if (!rom_font_desc(handle, fmt, stride, w, h, gfx))
 		return;
-	const u32 cell = m_ctx.cell;
 	if (cell < 0x20 || cell > 0x7e)
 		return;
 	// glyph data is indexed by ASCII code (stream includes codes 0x00-0x1f)
@@ -973,17 +981,18 @@ void ft812_device::draw_rom_font(s32 x, s32 y)
 		}
 }
 
-void ft812_device::draw_bitmap(s32 x, s32 y)
+void ft812_device::draw_bitmap(s32 x, s32 y, u8 handle, u8 cell)
 {
+	const bitmap_state &bitmap = m_bitmap_state[handle];
 	// Handles 16-31 can also reference RAM_G bitmaps; ROM fonts use a source outside RAM_G.
-	if (m_ctx.bitmap_handle >= 16 && m_ctx.bitmap_source >= RAM_G_SIZE)
+	if (handle >= 16 && bitmap.source >= RAM_G_SIZE)
 	{
 		if (m_font_rom)
 		{
-			draw_rom_font(x, y);
+			draw_rom_font(x, y, handle, cell);
 			return;
 		}
-		const u8 *glyph = ROM_FONT[m_ctx.cell & 0x7f]; // fallback: public domain 8x8
+		const u8 *glyph = ROM_FONT[cell & 0x7f]; // fallback: public domain 8x8
 		for (u32 v = 0; v < 8; v++)
 			for (u32 u = 0; u < 8; u++)
 				if (glyph[v] & (0x80 >> u))
@@ -991,11 +1000,11 @@ void ft812_device::draw_bitmap(s32 x, s32 y)
 		return;
 	}
 
-	const u32 fmt = (m_ctx.bitmap_layout >> 19) & 0x1f;
-	const u32 stride = ((m_ctx.bitmap_layout >> 9) & 0x3ff) | (((m_ctx.bitmap_layout_h >> 2) & 3) << 10);
-	const u32 lines = (m_ctx.bitmap_layout & 0x1ff) | ((m_ctx.bitmap_layout_h & 3) << 9);
-	const u32 w = ((m_ctx.bitmap_size >> 9) & 0x1ff) | (((m_ctx.bitmap_size_h >> 2) & 3) << 9);
-	const u32 h = (m_ctx.bitmap_size & 0x1ff) | ((m_ctx.bitmap_size_h & 3) << 9);
+	const u32 fmt = (bitmap.layout >> 19) & 0x1f;
+	const u32 stride = ((bitmap.layout >> 9) & 0x3ff) | (((bitmap.layout_h >> 2) & 3) << 10);
+	const u32 lines = (bitmap.layout & 0x1ff) | ((bitmap.layout_h & 3) << 9);
+	const u32 w = ((bitmap.size >> 9) & 0x1ff) | (((bitmap.size_h >> 2) & 3) << 9);
+	const u32 h = (bitmap.size & 0x1ff) | ((bitmap.size_h & 3) << 9);
 	if (!stride || !lines || !w || !h)
 		return;
 
@@ -1022,28 +1031,28 @@ void ft812_device::draw_bitmap(s32 x, s32 y)
 	if (!source_width || !source_height)
 		return;
 
-	const u32 src = m_ctx.bitmap_source + u32(m_ctx.cell) * stride * lines;
+	const u32 src = bitmap.source + u32(cell) * stride * lines;
 	const double a = double(m_ctx.bitmap_transform_a) / 256.0;
 	const double b = double(m_ctx.bitmap_transform_b) / 256.0;
 	const double c = double(m_ctx.bitmap_transform_c) / 256.0;
 	const double d = double(m_ctx.bitmap_transform_d) / 256.0;
 	const double e = double(m_ctx.bitmap_transform_e) / 256.0;
 	const double f = double(m_ctx.bitmap_transform_f) / 256.0;
-	const double det = a * d - b * c;
+	const double det = a * e - b * d;
 	if (std::abs(det) < 1.0e-12)
 		return;
 
 	// FT812 coefficients map destination coordinates to bitmap coordinates.
 	auto inverse = [a, b, c, d, e, f, det](double u, double v)
 	{
-		u -= e;
+		u -= c;
 		v -= f;
-		return std::pair<double, double>((d * u - c * v) / det, (a * v - b * u) / det);
+		return std::pair<double, double>((e * u - b * v) / det, (a * v - d * u) / det);
 	};
 
 	auto transform = [a, b, c, d, e, f](double x, double y)
 	{
-		return std::pair<double, double>(a * x + c * y + e, b * x + d * y + f);
+		return std::pair<double, double>(a * x + b * y + c, d * x + e * y + f);
 	};
 
 	const std::pair<double, double> corners[] = {
@@ -1075,7 +1084,8 @@ void ft812_device::draw_bitmap(s32 x, s32 y)
 			const double px = double(dx - x) + 0.5;
 			const double py = double(dy - y) + 0.5;
 			const auto [u, v] = transform(px, py);
-			draw_px(dx, dy, bitmap_sample(src, fmt, u - 0.5, v - 0.5, stride, lines, source_width, source_height));
+			draw_px(dx, dy, bitmap_sample(src, fmt, u - 0.5, v - 0.5, stride, lines, source_width, source_height,
+					bitmap.wrap_x, bitmap.wrap_y, bitmap.filter));
 		}
 	}
 }
@@ -1139,10 +1149,10 @@ void ft812_device::copro_execute()
 		append_dl(0x27000004); // VERTEX_FORMAT(4)
 		append_dl(0x2b000000); // VERTEX_TRANSLATE_X(0)
 		append_dl(0x2c000000); // VERTEX_TRANSLATE_Y(0)
+		append_dl(0x05000000 | (font & 0x1f)); // BITMAP_HANDLE
 		if (font >= 16)
 			append_dl(DL_BITMAP_SOURCE | 0x1e0000); // select the FT812 ROM font window
 		append_dl(0x1f000001); // BEGIN(BITMAPS)
-		append_dl(0x05000000 | (font & 0x1f)); // BITMAP_HANDLE
 		s32 pen_x = x, pen_y = y;
 		for (u8 ch : text)
 		{
@@ -1523,16 +1533,16 @@ void ft812_device::copro_execute()
 				};
 				const double inv_det = 1.0 / det;
 				const double bitmap_a = d * inv_det;
-				const double bitmap_b = -b * inv_det;
-				const double bitmap_c = -c * inv_det;
-				const double bitmap_d = a * inv_det;
-				const double bitmap_e = (c * f - d * e) * inv_det;
+				const double bitmap_b = -c * inv_det;
+				const double bitmap_c = (c * f - d * e) * inv_det;
+				const double bitmap_d = -b * inv_det;
+				const double bitmap_e = a * inv_det;
 				const double bitmap_f = (b * e - a * f) * inv_det;
 				append_dl(DL_BITMAP_TRANSFORM_A | (u32(encode(bitmap_a, -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
 				append_dl(DL_BITMAP_TRANSFORM_B | (u32(encode(bitmap_b, -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
-				append_dl(DL_BITMAP_TRANSFORM_C | (u32(encode(bitmap_c, -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
+				append_dl(DL_BITMAP_TRANSFORM_C | (u32(encode(bitmap_c, -(1 << 23), (1 << 23) - 1)) & 0x00ffffff));
 				append_dl(DL_BITMAP_TRANSFORM_D | (u32(encode(bitmap_d, -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
-				append_dl(DL_BITMAP_TRANSFORM_E | (u32(encode(bitmap_e, -(1 << 23), (1 << 23) - 1)) & 0x00ffffff));
+				append_dl(DL_BITMAP_TRANSFORM_E | (u32(encode(bitmap_e, -(1 << 16), (1 << 16) - 1)) & 0x1ffff));
 				append_dl(DL_BITMAP_TRANSFORM_F | (u32(encode(bitmap_f, -(1 << 23), (1 << 23) - 1)) & 0x00ffffff));
 				break;
 			}
@@ -1556,7 +1566,6 @@ void ft812_device::render_dl()
 {
 	m_ctx = dl_context();
 	m_ctx_stack = {};
-	m_prim = 0;
 	m_have_vertex = false;
 
 	for (u32 i = 0; i < RAM_DL_SIZE / 4; i++)
@@ -1601,25 +1610,25 @@ void ft812_device::render_dl()
 			m_ctx.line_width = cmd & 0x00'ffffff;
 			break;
 		case DL_BITMAP_SOURCE:
-			m_ctx.bitmap_source = cmd & 0x00'ffff'ff;
+			m_bitmap_state[m_ctx.bitmap_handle].source = cmd & 0x00'ffff'ff;
 			break;
 		case DL_BITMAP_HANDLE:
 			m_ctx.bitmap_handle = cmd & 0x1f;
 			break;
 		case DL_BITMAP_LAYOUT:
-			m_ctx.bitmap_layout = cmd & 0x00'ffffff;
+			m_bitmap_state[m_ctx.bitmap_handle].layout = cmd & 0x00'ffffff;
 			break;
 		case DL_BITMAP_SIZE:
-			m_ctx.bitmap_size = cmd & 0x00'ffffff;
-			m_ctx.bitmap_filter = BIT(cmd, 20);
-			m_ctx.bitmap_wrap_x = BIT(cmd, 19);
-			m_ctx.bitmap_wrap_y = BIT(cmd, 18);
+			m_bitmap_state[m_ctx.bitmap_handle].size = cmd & 0x00'ffffff;
+			m_bitmap_state[m_ctx.bitmap_handle].filter = BIT(cmd, 20);
+			m_bitmap_state[m_ctx.bitmap_handle].wrap_x = BIT(cmd, 19);
+			m_bitmap_state[m_ctx.bitmap_handle].wrap_y = BIT(cmd, 18);
 			break;
 		case DL_BITMAP_LAYOUT_H: // linestride bits 11:10, height bits 10:9
-			m_ctx.bitmap_layout_h = cmd & 0xf;
+			m_bitmap_state[m_ctx.bitmap_handle].layout_h = cmd & 0xf;
 			break;
 		case DL_BITMAP_SIZE_H: // width bits 10:9, height bits 10:9
-			m_ctx.bitmap_size_h = cmd & 0xf;
+			m_bitmap_state[m_ctx.bitmap_handle].size_h = cmd & 0xf;
 			break;
 		case DL_CELL:
 			m_ctx.cell = cmd & 0x7f;
@@ -1631,13 +1640,13 @@ void ft812_device::render_dl()
 			m_ctx.bitmap_transform_b = util::sext(cmd & 0x1ffff, 17);
 			break;
 		case DL_BITMAP_TRANSFORM_C:
-			m_ctx.bitmap_transform_c = util::sext(cmd & 0x1ffff, 17);
+			m_ctx.bitmap_transform_c = util::sext(cmd & 0x00ffffff, 24);
 			break;
 		case DL_BITMAP_TRANSFORM_D:
 			m_ctx.bitmap_transform_d = util::sext(cmd & 0x1ffff, 17);
 			break;
 		case DL_BITMAP_TRANSFORM_E:
-			m_ctx.bitmap_transform_e = util::sext(cmd & 0x00ffffff, 24);
+			m_ctx.bitmap_transform_e = util::sext(cmd & 0x1ffff, 17);
 			break;
 		case DL_BITMAP_TRANSFORM_F:
 			m_ctx.bitmap_transform_f = util::sext(cmd & 0x00ffffff, 24);
@@ -1742,12 +1751,10 @@ void ft812_device::render_dl()
 				const s32 y = s32((cmd >> 12) & 0x1ff) * 16 + m_ctx.vtx_ty;
 				const u8 handle = (cmd >> 7) & 0x1f;
 				const u8 cell = cmd & 0x7f;
-				m_ctx.cell = cell;
-				m_ctx.bitmap_handle = handle;
 				switch (m_prim)
 				{
 				case PRIM_BITMAPS:
-					draw_bitmap(x >> 4, y >> 4);
+					draw_bitmap(x >> 4, y >> 4, handle, cell);
 					break;
 				case PRIM_POINTS:
 					draw_point(x, y);
@@ -1803,7 +1810,7 @@ void ft812_device::render_dl()
 				switch (m_prim)
 				{
 				case PRIM_BITMAPS:
-					draw_bitmap(xs >> 4, ys >> 4);
+					draw_bitmap(xs >> 4, ys >> 4, m_ctx.bitmap_handle, m_ctx.cell);
 					break;
 				case PRIM_POINTS:
 					draw_point(xs, ys);

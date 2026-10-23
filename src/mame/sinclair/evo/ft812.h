@@ -51,7 +51,7 @@ public:
 protected:
 	virtual const tiny_rom_entry *device_rom_region() const override ATTR_COLD;
 
-	void draw_rom_font(s32 x, s32 y);
+	void draw_rom_font(s32 x, s32 y, u8 handle, u8 cell);
 	bool rom_font_desc(u32 font, u32 &fmt, u32 &stride, u32 &w, u32 &h, u32 &gfx) const;
 	const u8 *m_font_rom = nullptr;      // optional font.bin, verbatim ROM window 0x1e0000-0x300000
 
@@ -172,6 +172,14 @@ private:
 	static constexpr u8 PRIM_EDGE_STRIP_B = 8;
 	static constexpr u8 PRIM_RECTS       = 9;
 
+	struct bitmap_state
+	{
+		u32 source = 0;
+		u32 layout = 0, size = 0;
+		u32 layout_h = 0, size_h = 0;
+		u8 filter = 0, wrap_x = 0, wrap_y = 0;
+	};
+
 	// bitmap formats (BITMAP_LAYOUT)
 	// bitmap formats per FT81x PG table 7 / TSLib 81x Const.inc
 	static constexpr u32 FMT_ARGB1555 = 0;
@@ -194,13 +202,9 @@ private:
 		u32 clear_a = 0;
 		u32 clear_stencil = 0, clear_tag = 0;
 		u32 point_size = 16, line_width = 16;
-		u32 bitmap_source = 0;
-		u32 bitmap_layout = 0, bitmap_size = 0;
-		u32 bitmap_layout_h = 0, bitmap_size_h = 0; // extended stride/size bits
 		s32 bitmap_transform_a = 256, bitmap_transform_b = 0;
-		s32 bitmap_transform_c = 0, bitmap_transform_d = 256;
-		s32 bitmap_transform_e = 0, bitmap_transform_f = 0;
-		u8 bitmap_filter = 0, bitmap_wrap_x = 0, bitmap_wrap_y = 0;
+		s32 bitmap_transform_c = 0, bitmap_transform_d = 0;
+		s32 bitmap_transform_e = 256, bitmap_transform_f = 0;
 		u8 bitmap_handle = 0, cell = 0;
 		s32 scissor_x = 0, scissor_y = 0, scissor_w = 2048, scissor_h = 2048;
 		u8 alpha_func = 7, alpha_ref = 0; // ALWAYS
@@ -234,9 +238,10 @@ private:
 	void draw_line(s32 x0, s32 y0, s32 x1, s32 y1);
 	void draw_rect(s32 x0, s32 y0, s32 x1, s32 y1);
 	void draw_edge_segment(s32 x0, s32 y0, s32 x1, s32 y1);
-	void draw_bitmap(s32 x, s32 y);
+	void draw_bitmap(s32 x, s32 y, u8 handle, u8 cell);
 	u32 bitmap_pixel(u32 byte_addr, u32 fmt, s32 u, s32 v, u32 stride, u32 lines);
-	u32 bitmap_sample(u32 byte_addr, u32 fmt, double u, double v, u32 stride, u32 lines, u32 width, u32 height);
+	u32 bitmap_sample(u32 byte_addr, u32 fmt, double u, double v, u32 stride, u32 lines, u32 width, u32 height,
+			u8 wrap_x, u8 wrap_y, u8 filter);
 
 	devcb_write_line m_miso_cb;
 	devcb_write_line m_int_cb;
@@ -253,6 +258,7 @@ private:
 	bitmap_rgb32 m_bitmap;
 	bitmap_ind8 m_stencil;
 	bitmap_ind8 m_tag_buffer;
+	bitmap_state m_bitmap_state[32]{};
 
 	// spi engine
 	u8 m_in_bit, m_in_latch, m_out_latch, m_cur_bit, m_ss;
