@@ -160,12 +160,9 @@ void ft812_device::device_stop()
 
 void ft812_device::postload_reconfig()
 {
-	logerror("POSTLOAD intflags=%08x en=%08x mask=%08x dlswap=%08x cmdread=%08x cmdwrite=%08x cmddl=%08x swap_pending=%u\n",
-		reg_r32(REG_INT_FLAGS), reg_r32(REG_INT_EN), reg_r32(REG_INT_MASK), reg_r32(REG_DLSWAP),
-		reg_r32(REG_CMD_READ), reg_r32(REG_CMD_WRITE), reg_r32(REG_CMD_DL), m_swap_pending);
-	m_timing_dirty = true;
+	m_timing_dirty = false;
+	reconfigure_timing();
 	render_dl();
-	logerror("POSTRENDER px(384,384)=%08x px(512,300)=%08x\n", m_bitmap.pix(384, 384), m_bitmap.pix(300, 512));
 }
 
 void ft812_device::device_reset()
@@ -405,19 +402,6 @@ void ft812_device::reg_w32(u32 reg, u32 data)
 		reg_w32(REG_CMD_WRITE, (w + 4) & 0xfff);
 		break;
 	}
-	case 0x5c: // DEBUG: dump bitmap when data == 0xd0d00001
-		if (data == 0xd0d00001)
-		{
-			static u32 dumpn = 0;
-			std::string fn = string_format("/tmp/ftdump%u.png", dumpn++);
-			emu_file file(OPEN_FLAG_WRITE | OPEN_FLAG_CREATE);
-			if (!file.open(fn))
-			{
-				util::png_write_bitmap(file, nullptr, m_bitmap, 0, nullptr);
-				logerror("FTDUMP %s\n", fn);
-			}
-		}
-		break;
 	case REG_FREQUENCY:
 	case REG_HCYCLE:
 	case REG_HOFFSET:
@@ -1340,8 +1324,22 @@ void ft812_device::copro_execute()
 		m_dl_ptr += 4;
 		return true;
 	};
-	auto emit_text = [this, &append_dl](s32 x, s32 y, u32 font, u32 options, const std::string &text)
+	auto active_primitive = [this]()
 	{
+		u8 primitive = 0;
+		for (u32 offset = 0; offset < m_dl_ptr; offset += 4)
+		{
+			const u32 command = get_u32le(&m_ram_dl[offset]);
+			if ((command & 0xff'000000) == DL_BEGIN)
+				primitive = command & 0x0f;
+			else if ((command & 0xff'000000) == DL_END)
+				primitive = 0;
+		}
+		return primitive;
+	};
+	auto emit_text = [this, &append_dl, &active_primitive](s32 x, s32 y, u32 font, u32 options, const std::string &text)
+	{
+		const u8 saved_primitive = active_primitive();
 		u32 fmt, stride, fw, fh, gfx;
 		const bool rom_font = (font >= 16) && rom_font_desc(font, fmt, stride, fw, fh, gfx);
 		const u8 *const widths = rom_font ? &m_font_rom[FONT_ROM_TABLE + (font - 16) * 148] : nullptr;
@@ -1397,6 +1395,8 @@ void ft812_device::copro_execute()
 		}
 		append_dl(0x21000000); // END
 		append_dl(0x23000000); // RESTORE_CONTEXT
+		if (saved_primitive)
+			append_dl(DL_BEGIN | saved_primitive);
 	};
 	auto valid_write_range = [this](u32 address, u32 length)
 	{
@@ -1504,7 +1504,7 @@ void ft812_device::copro_execute()
 				inflateEnd(zs);
 				m_inflate_active = false;
 				// next command starts on the following word boundary
-				r = (r + consumed + 3) & ~3U;
+				r = ((r + consumed + 3) & ~3U) & 0xfff;
 				continue;
 			}
 			r = (r + consumed) & 0xfff;
@@ -1565,6 +1565,10 @@ void ft812_device::copro_execute()
 					command_size = total > 0xffffffff ? 0xffffffff : u32(total);
 					complete = command_size <= count;
 				}
+				break;
+			case 0x1e: // CMD_APPEND
+				command_size = 12;
+				complete = count >= command_size;
 				break;
 			case 0x0a: // CMD_FGCOLOR
 				command_size = 8;
@@ -1632,6 +1636,7 @@ void ft812_device::copro_execute()
 					text.push_back(char(byte_at(string_offset + i)));
 				if (button)
 				{
+					const u8 saved_primitive = active_primitive();
 					append_dl(0x22000000); // SAVE_CONTEXT
 					append_dl(0x04000000 | 0x00404040); // COLOR_RGB(default widget background)
 					append_dl(0x1f000009); // BEGIN(RECTS)
@@ -1642,6 +1647,8 @@ void ft812_device::copro_execute()
 					append_dl(0x04000000 | m_copro_fgcolor);
 					emit_text(x + width / 2, y + height / 2, font, options | 0x0600, text);
 					append_dl(0x23000000); // RESTORE_CONTEXT
+					if (saved_primitive)
+						append_dl(DL_BEGIN | saved_primitive);
 				}
 				else
 					emit_text(x, y, font, options, text);
@@ -1655,6 +1662,29 @@ void ft812_device::copro_execute()
 				for (u32 i = 0; i < length; i++)
 					payload[i] = byte_at(12 + i);
 				write_memory(address, payload.data(), length);
+				break;
+			}
+			case 0x1e: // CMD_APPEND
+			{
+				const u32 address = word_at(4);
+				const u32 length = word_at(8);
+				if (length & 3)
+				{
+					logerror("%s: CMD_APPEND length %06x is not word-aligned\n", tag(), length);
+					break;
+				}
+				if (address > RAM_G_SIZE || length > RAM_G_SIZE - address)
+				{
+					logerror("%s: CMD_APPEND source %06x+%06x exceeds RAM_G\n", tag(), address, length);
+					break;
+				}
+				if (m_dl_ptr > RAM_DL_SIZE || length > RAM_DL_SIZE - m_dl_ptr)
+				{
+					logerror("%s: CMD_APPEND of %06x bytes exceeds remaining RAM_DL space\n", tag(), length);
+					break;
+				}
+				for (u32 offset = 0; offset < length; offset += 4)
+					append_dl(get_u32le(&m_ram_g[address + offset]));
 				break;
 			}
 			case 0x22: // CMD_INFLATE
@@ -1785,7 +1815,7 @@ void ft812_device::copro_execute()
 		}
 	}
 	reg_w32(REG_CMD_READ, r);
-	reg_w32(REG_CMD_DL, r);
+	reg_w32(REG_CMD_DL, m_dl_ptr);
 }
 
 void ft812_device::render_dl()
