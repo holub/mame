@@ -58,6 +58,7 @@ protected:
 	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
+	void postload_reconfig() ATTR_COLD;
 	virtual void device_stop() override;
 	virtual space_config_vector memory_space_config() const override;
 
@@ -240,8 +241,6 @@ private:
 	void draw_edge_segment(s32 x0, s32 y0, s32 x1, s32 y1);
 	void draw_bitmap(s32 x, s32 y, u8 handle, u8 cell);
 	u32 bitmap_pixel(u32 byte_addr, u32 fmt, s32 u, s32 v, u32 stride, u32 lines);
-	u32 bitmap_sample(u32 byte_addr, u32 fmt, double u, double v, u32 stride, u32 lines, u32 width, u32 height,
-			u8 wrap_x, u8 wrap_y, u8 filter);
 
 	devcb_write_line m_miso_cb;
 	devcb_write_line m_int_cb;

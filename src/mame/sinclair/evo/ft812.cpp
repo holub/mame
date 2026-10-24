@@ -8,8 +8,11 @@
 #include "multibyte.h"
 #include <charconv>
 #include <cmath>
+#include <vector>
 #include <string>
 #include <zlib.h>
+#include "png.h"
+#include "fileio.h"
 
 #define LOG_WARN    (1U << 1)
 
@@ -17,6 +20,8 @@
 #include "logmacro.h"
 
 DEFINE_DEVICE_TYPE(FT812, ft812_device, "ft812", "FTDI FT812 Embedded Video Engine")
+
+
 
 // optional user supplied dump of the FT812 ROM font window (0x1e0000-0x300000);
 // layout: 19 x 148 byte font metrics blocks at 0x21ee0, ROM_FONTROOT pointer at 0xffffc (PG 5.5.1).
@@ -73,6 +78,8 @@ void ft812_device::device_add_mconfig(machine_config &config)
 void ft812_device::device_start()
 {
 	m_screen = subdevice<screen_device>("screen");
+	machine().save().register_postload(save_prepost_delegate(FUNC(ft812_device::postload_reconfig), this));
+	logerror("FT812 STARTED\n");
 	m_space = &space(AS_FT);
 	m_inflate_zs = new z_stream;
 	m_inflate_active = false;
@@ -150,6 +157,16 @@ void ft812_device::device_stop()
 	m_inflate_zs = nullptr;
 }
 
+
+void ft812_device::postload_reconfig()
+{
+	logerror("POSTLOAD intflags=%08x en=%08x mask=%08x dlswap=%08x cmdread=%08x cmdwrite=%08x cmddl=%08x swap_pending=%u\n",
+		reg_r32(REG_INT_FLAGS), reg_r32(REG_INT_EN), reg_r32(REG_INT_MASK), reg_r32(REG_DLSWAP),
+		reg_r32(REG_CMD_READ), reg_r32(REG_CMD_WRITE), reg_r32(REG_CMD_DL), m_swap_pending);
+	m_timing_dirty = true;
+	render_dl();
+	logerror("POSTRENDER px(384,384)=%08x px(512,300)=%08x\n", m_bitmap.pix(384, 384), m_bitmap.pix(300, 512));
+}
 
 void ft812_device::device_reset()
 {
@@ -388,6 +405,19 @@ void ft812_device::reg_w32(u32 reg, u32 data)
 		reg_w32(REG_CMD_WRITE, (w + 4) & 0xfff);
 		break;
 	}
+	case 0x5c: // DEBUG: dump bitmap when data == 0xd0d00001
+		if (data == 0xd0d00001)
+		{
+			static u32 dumpn = 0;
+			std::string fn = string_format("/tmp/ftdump%u.png", dumpn++);
+			emu_file file(OPEN_FLAG_WRITE | OPEN_FLAG_CREATE);
+			if (!file.open(fn))
+			{
+				util::png_write_bitmap(file, nullptr, m_bitmap, 0, nullptr);
+				logerror("FTDUMP %s\n", fn);
+			}
+		}
+		break;
 	case REG_FREQUENCY:
 	case REG_HCYCLE:
 	case REG_HOFFSET:
@@ -569,18 +599,24 @@ u32 ft812_device::bitmap_pixel(u32 byte_addr, u32 fmt, s32 u, s32 v, u32 stride,
 	const u32 color = m_ctx.color & 0x00ffffff;
 	auto modulate = [color, alpha](u32 pixel)
 	{
-		const u32 a = ((pixel >> 24) & 0xff) * alpha / 255;
-		const u32 r = ((pixel >> 16) & 0xff) * ((color >> 16) & 0xff) / 255;
-		const u32 g = ((pixel >> 8) & 0xff) * ((color >> 8) & 0xff) / 255;
-		const u32 bl = (pixel & 0xff) * (color & 0xff) / 255;
+		if (alpha == 255 && color == 0x00'ff'ffff)
+			return pixel;
+		auto div255 = [](u32 x) { return (x * 0x8081) >> 23; }; // exact for x <= 65025
+		const u32 a = div255(((pixel >> 24) & 0xff) * alpha);
+		const u32 r = div255(((pixel >> 16) & 0xff) * ((color >> 16) & 0xff));
+		const u32 g = div255(((pixel >> 8) & 0xff) * ((color >> 8) & 0xff));
+		const u32 bl = div255((pixel & 0xff) * (color & 0xff));
 		return (a << 24) | (r << 16) | (g << 8) | bl;
 	};
 	auto luminance = [color, alpha](u32 level)
 	{
-		return ((level * alpha / 255) << 24)
-			| (((color >> 16) & 0xff) * level / 255 << 16)
-			| (((color >> 8) & 0xff) * level / 255 << 8)
-			| ((color & 0xff) * level / 255);
+		if (alpha == 255 && color == 0x00'ff'ffff)
+			return level << 24 | level * 0x01'01'01;
+		auto div255 = [](u32 x) { return (x * 0x8081) >> 23; }; // exact for x <= 65025
+		return (div255(level * alpha) << 24)
+			| (div255(((color >> 16) & 0xff) * level) << 16)
+			| (div255(((color >> 8) & 0xff) * level) << 8)
+			| div255((color & 0xff) * level);
 	};
 	switch (fmt)
 	{
@@ -588,16 +624,16 @@ u32 ft812_device::bitmap_pixel(u32 byte_addr, u32 fmt, s32 u, s32 v, u32 stride,
 		return luminance(b);
 	case FMT_RGB332: // r3 g3 b2
 		return modulate(0xff000000
-			| (u32(b >> 5) * 255 / 7 << 16)
-			| (u32((b >> 2) & 7) * 255 / 7 << 8)
-			| (u32(b & 3) * 255 / 3));
+			| (((b >> 5) * 73 >> 1) << 16)
+			| ((((b >> 2) & 7) * 73 >> 1) << 8)
+			| ((b & 3) * 85));
 	case FMT_ARGB1555:
 	{
 		const u16 w = get_u16le(&m_ram_g[idx16 & (RAM_G_SIZE - 2)]);
 		return modulate((BIT(w, 15) ? 0xff000000 : 0)
-			| (u32((w >> 10) & 0x1f) * 255 / 31 << 16)
-			| (u32((w >> 5) & 0x1f) * 255 / 31 << 8)
-			| (u32(w & 0x1f) * 255 / 31));
+			| ((((w >> 10) & 0x1f) * 33 >> 2) << 16)
+			| ((((w >> 5) & 0x1f) * 33 >> 2) << 8)
+			| ((w & 0x1f) * 33 >> 2));
 	}
 	case FMT_ARGB4: // a4 r4 g4 b4
 	{
@@ -609,9 +645,9 @@ u32 ft812_device::bitmap_pixel(u32 byte_addr, u32 fmt, s32 u, s32 v, u32 stride,
 	{
 		const u16 w = get_u16le(&m_ram_g[idx16 & (RAM_G_SIZE - 2)]);
 		return modulate(0xff000000
-			| (u32((w >> 11) & 0x1f) * 255 / 31 << 16)
-			| (u32((w >> 5) & 0x3f) * 255 / 63 << 8)
-			| (u32(w & 0x1f) * 255 / 31));
+			| ((((w >> 11) & 0x1f) * 33 >> 2) << 16)
+			| ((((w >> 5) & 0x3f) * 65 >> 4) << 8)
+			| ((w & 0x1f) * 33 >> 2));
 	}
 	case FMT_L4: // 2 px/byte, high nibble first; default palette = luminance ramp
 	{
@@ -646,9 +682,9 @@ u32 ft812_device::bitmap_pixel(u32 byte_addr, u32 fmt, s32 u, s32 v, u32 stride,
 	{
 		const u16 w = get_u16le(&m_ram_g[(m_ctx.palette_source + 2 * b) & (RAM_G_SIZE - 2)]);
 		return modulate(0xff000000
-			| (u32((w >> 11) & 0x1f) * 255 / 31 << 16)
-			| (u32((w >> 5) & 0x3f) * 255 / 63 << 8)
-			| (u32(w & 0x1f) * 255 / 31));
+			| ((((w >> 11) & 0x1f) * 33 >> 2) << 16)
+			| ((((w >> 5) & 0x3f) * 65 >> 4) << 8)
+			| ((w & 0x1f) * 33 >> 2));
 	}
 	case FMT_ARGB2: // 2:2:2:2
 	{
@@ -662,40 +698,6 @@ u32 ft812_device::bitmap_pixel(u32 byte_addr, u32 fmt, s32 u, s32 v, u32 stride,
 	}
 }
 
-u32 ft812_device::bitmap_sample(u32 byte_addr, u32 fmt, double u, double v, u32 stride, u32 lines, u32 width, u32 height,
-		u8 wrap_x, u8 wrap_y, u8 filter)
-{
-	auto texel = [this, byte_addr, fmt, stride, lines, width, height, wrap_x, wrap_y](s32 x, s32 y)
-	{
-		if (wrap_x)
-			x = (x % s32(width) + s32(width)) % s32(width);
-		else if (x < 0 || x >= s32(width))
-			return 0U;
-
-		if (wrap_y)
-			y = (y % s32(height) + s32(height)) % s32(height);
-		else if (y < 0 || y >= s32(height))
-			return 0U;
-
-		return bitmap_pixel(byte_addr, fmt, x, y, stride, lines);
-	};
-
-	if (!filter)
-		return texel(s32(std::floor(u + 0.5)), s32(std::floor(v + 0.5)));
-
-	const s32 x0 = s32(std::floor(u)), y0 = s32(std::floor(v));
-	const double fx = u - x0, fy = v - y0;
-	const u32 p00 = texel(x0, y0), p10 = texel(x0 + 1, y0);
-	const u32 p01 = texel(x0, y0 + 1), p11 = texel(x0 + 1, y0 + 1);
-	u32 result = 0;
-	for (u32 shift : { 0U, 8U, 16U, 24U })
-	{
-		const double top = ((p00 >> shift) & 0xff) * (1.0 - fx) + ((p10 >> shift) & 0xff) * fx;
-		const double bottom = ((p01 >> shift) & 0xff) * (1.0 - fx) + ((p11 >> shift) & 0xff) * fx;
-		result |= u32(std::clamp(top * (1.0 - fy) + bottom * fy + 0.5, 0.0, 255.0)) << shift;
-	}
-	return result;
-}
 
 void ft812_device::draw_point(s32 x, s32 y)
 {
@@ -1050,10 +1052,6 @@ void ft812_device::draw_bitmap(s32 x, s32 y, u8 handle, u8 cell)
 		return std::pair<double, double>((e * u - b * v) / det, (a * v - d * u) / det);
 	};
 
-	auto transform = [a, b, c, d, e, f](double x, double y)
-	{
-		return std::pair<double, double>(a * x + b * y + c, d * x + e * y + f);
-	};
 
 	const std::pair<double, double> corners[] = {
 		inverse(0, 0), inverse(source_width, 0), inverse(0, source_height), inverse(source_width, source_height)
@@ -1077,16 +1075,244 @@ void ft812_device::draw_bitmap(s32 x, s32 y, u8 handle, u8 cell)
 	if (left > right || top > bottom)
 		return;
 
-	for (s32 dy = s32(top); dy <= s32(bottom); dy++)
+	// when no alpha test, stencil effect, tag write or blending applies the
+	// result replaces the destination directly; skip the draw_px machinery
+	const bool direct = m_ctx.alpha_func == 7 && m_ctx.stencil_func == 7 && m_ctx.stencil_write_mask == 0 &&
+		m_ctx.tag_mask == 0 && m_ctx.blend_src == 1 && m_ctx.blend_dst == 0 && m_ctx.color_mask == 0xf;
+
+	// magnification: decode the sampled source rectangle once into argb texels,
+	// replacing per-pixel format decode and modulation with a table lookup
+	const double u_corners[] = {
+		a * (left - x + 0.5) + b * (top - y + 0.5) + c, a * (right - x + 0.5) + b * (top - y + 0.5) + c,
+		a * (left - x + 0.5) + b * (bottom - y + 0.5) + c, a * (right - x + 0.5) + b * (bottom - y + 0.5) + c };
+	const double v_corners[] = {
+		d * (left - x + 0.5) + e * (top - y + 0.5) + f, d * (right - x + 0.5) + e * (top - y + 0.5) + f,
+		d * (left - x + 0.5) + e * (bottom - y + 0.5) + f, d * (right - x + 0.5) + e * (bottom - y + 0.5) + f };
+	const s32 su_lo = std::clamp<s32>(s32(std::floor(*std::min_element(std::begin(u_corners), std::end(u_corners)))) - 1, 0, s32(source_width) - 1);
+	const s32 su_hi = std::clamp<s32>(s32(std::ceil(*std::max_element(std::begin(u_corners), std::end(u_corners)))) + 1, 0, s32(source_width) - 1);
+	const s32 sv_lo = std::clamp<s32>(s32(std::floor(*std::min_element(std::begin(v_corners), std::end(v_corners)))) - 1, 0, s32(source_height) - 1);
+	const s32 sv_hi = std::clamp<s32>(s32(std::ceil(*std::max_element(std::begin(v_corners), std::end(v_corners)))) + 1, 0, s32(source_height) - 1);
+	const u32 rw = u32(su_hi - su_lo + 1), rh = u32(sv_hi - sv_lo + 1);
+	const u64 dest_count = u64(right - left + 1) * u64(bottom - top + 1);
+	const bool decode_all = !bitmap.wrap_x && !bitmap.wrap_y && u64(rw) * rh < dest_count * (bitmap.filter ? 3 : 1);
+	std::vector<u32> scratch;
+	if (decode_all)
 	{
-		for (s32 dx = s32(left); dx <= s32(right); dx++)
+		scratch.resize(rw * rh);
+		for (u32 v = 0; v < rh; v++)
+			for (u32 u = 0; u < rw; u++)
+				scratch[v * rw + u] = bitmap_pixel(src, fmt, u32(su_lo) + u, u32(sv_lo) + v, stride, lines);
+	}
+	auto fetch = [&](s32 tu, s32 tv) -> u32
+	{
+		if (decode_all)
+			return scratch[(tv - sv_lo) * rw + (tu - su_lo)];
+		return bitmap_pixel(src, fmt, tu, tv, stride, lines);
+	};
+
+	// per-draw pixel writer: when the alpha and stencil tests always pass the
+	// per-pixel decisions are constant, so only blending/tag/stencil-write remain
+	u8 stencil_lut[256];
+	if (m_ctx.alpha_func == 7 && m_ctx.stencil_func == 7 && m_ctx.stencil_write_mask)
+	{
+		for (u32 old = 0; old < 256; old++)
 		{
-			const double px = double(dx - x) + 0.5;
-			const double py = double(dy - y) + 0.5;
-			const auto [u, v] = transform(px, py);
-			draw_px(dx, dy, bitmap_sample(src, fmt, u - 0.5, v - 0.5, stride, lines, source_width, source_height,
-					bitmap.wrap_x, bitmap.wrap_y, bitmap.filter));
+			switch (m_ctx.stencil_pass)
+			{
+			case 0: stencil_lut[old] = 0; break;
+			case 2: stencil_lut[old] = m_ctx.stencil_ref; break;
+			case 3: stencil_lut[old] = u8(std::min<u32>(0xff, old + 1)); break;
+			case 4: stencil_lut[old] = u8(old ? old - 1 : 0); break;
+			case 5: stencil_lut[old] = u8(~old); break;
+			case 6: stencil_lut[old] = u8(old + 1); break;
+			case 7: stencil_lut[old] = u8(old - 1); break;
+			default: stencil_lut[old] = u8(old); break;
+			}
 		}
+	}
+	const bool fast_px = m_ctx.alpha_func == 7 && m_ctx.stencil_func == 7;
+	auto put_px = [&](s32 dx, s32 dy, u32 px)
+	{
+		if (direct)
+		{
+			m_bitmap.pix(dy, dx) = px;
+			return;
+		}
+		if (!fast_px)
+		{
+			draw_px(dx, dy, px);
+			return;
+		}
+		if (m_ctx.stencil_write_mask)
+		{
+			u8 &st = m_stencil.pix(dy, dx);
+			st = u8(st & ~m_ctx.stencil_write_mask) | u8(stencil_lut[st] & m_ctx.stencil_write_mask);
+		}
+		if (m_ctx.tag_mask)
+			m_tag_buffer.pix(dy, dx) = m_ctx.tag;
+		if (!px && m_ctx.blend_src == 2 && m_ctx.blend_dst == 4)
+			return; // fully transparent source leaves every channel at dst
+		const u32 d = m_bitmap.pix(dy, dx);
+		if (m_ctx.color_mask == 0x1 && m_ctx.blend_src == 1 && m_ctx.blend_dst == 0)
+		{
+			// only the alpha channel is written and passes through unmodulated
+			m_bitmap.pix(dy, dx) = (d & 0x00'ff'ffff) | (px & 0xff'00'00'00);
+			return;
+		}
+		const u32 a = (px >> 24) & 0xff;
+		if (m_ctx.color_mask == 0xe && m_ctx.blend_dst == 0 && m_ctx.blend_src == 2)
+		{
+			// rgb = src * src_alpha, alpha keeps destination
+			const u32 r = (((px >> 16) & 0xff) * a + 127) / 255;
+			const u32 g = (((px >> 8) & 0xff) * a + 127) / 255;
+			const u32 b = ((px & 0xff) * a + 127) / 255;
+			m_bitmap.pix(dy, dx) = (d & 0xff'00'00'00) | r << 16 | g << 8 | b;
+			return;
+		}
+		if (m_ctx.color_mask == 0xe && m_ctx.blend_src == 2 && m_ctx.blend_dst == 4)
+		{
+			// classic alpha blend of rgb, alpha keeps destination
+			const u32 ia = 255 - a;
+			auto channel = [a, ia](u32 s, u32 dst) { return std::min<u32>(255, (s * a + dst * ia + 127) / 255); };
+			const u32 r = channel((px >> 16) & 0xff, (d >> 16) & 0xff);
+			const u32 g = channel((px >> 8) & 0xff, (d >> 8) & 0xff);
+			const u32 b = channel(px & 0xff, d & 0xff);
+			m_bitmap.pix(dy, dx) = (d & 0xff'00'00'00) | r << 16 | g << 8 | b;
+			return;
+		}
+		auto blend_factor = [a, d](u8 factor)
+		{
+			switch (factor)
+			{
+			case 1: return 255U;
+			case 2: return a;
+			case 3: return (d >> 24) & 0xff;
+			case 4: return 255U - a;
+			case 5: return 255U - ((d >> 24) & 0xff);
+			default: return 0U;
+			}
+		};
+		const u32 fs = blend_factor(m_ctx.blend_src);
+		const u32 fd = blend_factor(m_ctx.blend_dst);
+		u32 out = 0;
+		for (u32 shift : { 0U, 8U, 16U, 24U })
+		{
+			const u32 src = (px >> shift) & 0xff;
+			const u32 dst = (d >> shift) & 0xff;
+			const u32 component = std::min<u32>(255, (src * fs + dst * fd + 127) / 255);
+			const u32 mask_bit = shift == 24 ? 0x01 : 1U << (shift / 8 + 1);
+			out |= ((m_ctx.color_mask & mask_bit) ? component : dst) << shift;
+		}
+		m_bitmap.pix(dy, dx) = out;
+	};
+
+	if (!bitmap.filter)
+	{
+		// nearest sampling with fixed-point stepping; out-of-range texels never
+		// reach draw_px, which keeps the common unfiltered-scaled case cheap
+		const s32 step_ux = s32(std::clamp(a * 65536.0, -2147483648.0, 2147483520.0));
+		const s32 step_uy = s32(std::clamp(b * 65536.0, -2147483648.0, 2147483520.0));
+		const s32 step_vx = s32(std::clamp(d * 65536.0, -2147483648.0, 2147483520.0));
+		const s32 step_vy = s32(std::clamp(e * 65536.0, -2147483648.0, 2147483520.0));
+		const double px0 = double(s32(left) - x) + 0.5;
+		const double py0 = double(s32(top) - y) + 0.5;
+		s64 su = s64((a * px0 + b * py0 + c - 0.5) * 65536.0);
+		s64 sv = s64((d * px0 + e * py0 + f - 0.5) * 65536.0);
+
+		const s32 y_lo = s32(top), y_hi = s32(bottom);
+		auto rows = [&](s32 ra, s32 rb)
+		{
+			s64 ru = su + s64(step_uy) * (ra - y_lo), rv = sv + s64(step_vy) * (ra - y_lo);
+			for (s32 dy = ra; dy <= rb; dy++)
+			{
+				s64 cu = ru, cv = rv;
+				for (s32 dx = s32(left); dx <= s32(right); dx++)
+				{
+					s32 tu = s32((cu + 0x8000) >> 16);
+					s32 tv = s32((cv + 0x8000) >> 16);
+					cu += step_ux;
+					cv += step_vx;
+
+					if (bitmap.wrap_x)
+						tu = (tu % s32(source_width) + s32(source_width)) % s32(source_width);
+					else if (tu < 0 || tu >= s32(source_width))
+					{
+						// the old path still ran a transparent pixel through draw_px
+						put_px(dx, dy, 0);
+						continue;
+					}
+					if (bitmap.wrap_y)
+						tv = (tv % s32(source_height) + s32(source_height)) % s32(source_height);
+					else if (tv < 0 || tv >= s32(source_height))
+					{
+						put_px(dx, dy, 0);
+						continue;
+					}
+
+					put_px(dx, dy, fetch(tu, tv));
+				}
+				ru += step_uy;
+				rv += step_vy;
+			}
+		};
+		rows(y_lo, y_hi);
+		return;
+	}
+
+	// bilinear sampling with the same fixed-point stepping
+	{
+		const s32 step_ux = s32(std::clamp(a * 65536.0, -2147483648.0, 2147483520.0));
+		const s32 step_uy = s32(std::clamp(b * 65536.0, -2147483648.0, 2147483520.0));
+		const s32 step_vx = s32(std::clamp(d * 65536.0, -2147483648.0, 2147483520.0));
+		const s32 step_vy = s32(std::clamp(e * 65536.0, -2147483648.0, 2147483520.0));
+		const double px0 = double(s32(left) - x) + 0.5;
+		const double py0 = double(s32(top) - y) + 0.5;
+		s64 su = s64((a * px0 + b * py0 + c - 0.5) * 65536.0);
+		s64 sv = s64((d * px0 + e * py0 + f - 0.5) * 65536.0);
+		auto texel = [&fetch, &bitmap, w = source_width, h = source_height](s32 tx, s32 ty) -> u32
+		{
+			if (bitmap.wrap_x)
+				tx = (tx % s32(w) + s32(w)) % s32(w);
+			else if (tx < 0 || tx >= s32(w))
+				return 0U;
+			if (bitmap.wrap_y)
+				ty = (ty % s32(h) + s32(h)) % s32(h);
+			else if (ty < 0 || ty >= s32(h))
+				return 0U;
+			return fetch(tx, ty);
+		};
+
+		const s32 y_lo = s32(top), y_hi = s32(bottom);
+		auto rows = [&](s32 ra, s32 rb)
+		{
+			s64 ru = su + s64(step_uy) * (ra - y_lo), rv = sv + s64(step_vy) * (ra - y_lo);
+			for (s32 dy = ra; dy <= rb; dy++)
+			{
+				s64 cu = ru, cv = rv;
+				for (s32 dx = s32(left); dx <= s32(right); dx++)
+				{
+					const s32 x0 = s32(cu >> 16), y0 = s32(cv >> 16);
+				const u32 fx = u32(cu >> 8) & 0xff;
+				const u32 fy = u32(cv >> 8) & 0xff;
+				cu += step_ux;
+				cv += step_vx;
+
+				const u32 p00 = texel(x0, y0), p10 = texel(x0 + 1, y0);
+				const u32 p01 = texel(x0, y0 + 1), p11 = texel(x0 + 1, y0 + 1);
+				u32 out = 0;
+				for (u32 shift : { 0U, 8U, 16U, 24U })
+				{
+					const u32 top = ((p00 >> shift) & 0xff) * (0x100 - fx) + ((p10 >> shift) & 0xff) * fx;
+					const u32 bottom = ((p01 >> shift) & 0xff) * (0x100 - fx) + ((p11 >> shift) & 0xff) * fx;
+					out |= ((top * (0x100 - fy) + bottom * fy) >> 16) << shift;
+				}
+					put_px(dx, dy, out);
+				}
+				ru += step_uy;
+				rv += step_vy;
+			}
+		};
+		rows(y_lo, y_hi);
 	}
 }
 
@@ -1864,4 +2090,5 @@ void ft812_device::render_dl()
 			break;
 		}
 	}
-}
+
+ }
