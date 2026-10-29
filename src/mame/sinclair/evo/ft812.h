@@ -136,6 +136,7 @@ private:
 	static constexpr u32 REG_CMDB_WRITE  = 0x578; // word write -> RAM_CMD
 
 	static constexpr u32 INT_SWAP = 0x01;
+	static constexpr u32 INT_CMDFLAG = 0x40;
 
 	// display list opcodes (top byte)
 	static constexpr u32 DL_BITMAP_SOURCE    = 0x01'000000;
