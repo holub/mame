@@ -1269,6 +1269,46 @@ void ft812_device::copro_execute()
 		for (u32 i = 0; i < length; i++)
 			m_space->write_byte(address + i, value);
 	};
+	auto fifo_put32 = [this, &r](u32 offset, u32 value)
+	{
+		for (u32 i = 0; i < 4; i++)
+			m_ram_cmd[(r + offset + i) & 0xfff] = value >> (8 * i);
+	};
+	// total size in bytes of fixed-length FT81x commands (without string payloads)
+	auto fixed_command_size = [](u8 opcode) -> u32
+	{
+		switch (opcode)
+		{
+		case 0x02: case 0x09: case 0x15: case 0x1f: case 0x23: case 0x36: case 0x38: case 0x3a: case 0x3c: case 0x34:
+			return 8;
+		case 0x16: case 0x1c: case 0x19: case 0x2b: case 0x39: case 0x3f: case 0x41:
+			return 12;
+		case 0x18: case 0x1d: case 0x25: case 0x2c: case 0x2d: case 0x3b: case 0x43:
+			return 16;
+		case 0x0b: case 0x0f: case 0x10: case 0x11: case 0x13: case 0x14: case 0x37:
+			return 20;
+		case 0x30: case 0x35:
+			return 24;
+		case 0x20: case 0x33:
+			return 28;
+		case 0x21:
+			return 56;
+		case 0x17: case 0x2f: case 0x31: case 0x32: case 0x40: case 0x42:
+			return 4;
+		default:
+			return 0;
+		}
+	};
+	auto handled_command = [](u8 opcode)
+	{
+		switch (opcode)
+		{
+		case 0x02: case 0x18: case 0x19: case 0x1c: case 0x1d: case 0x23: case 0x32: case 0x33:
+			return true;
+		default:
+			return false;
+		}
+	};
 	auto command_name = [](u8 opcode) -> const char *
 	{
 		switch (opcode)
@@ -1371,7 +1411,9 @@ void ft812_device::copro_execute()
 				string_offset = 12;
 				[[fallthrough]];
 			case 0x0d: // CMD_BUTTON
-				if (opcode == 0x0d)
+			case 0x0e: // CMD_KEYS
+			case 0x12: // CMD_TOGGLE
+				if (opcode != 0x0c)
 					string_offset = 16;
 				for (u32 pos = string_offset; pos < count; pos++)
 				{
@@ -1438,6 +1480,16 @@ void ft812_device::copro_execute()
 			case 0x01: // CMD_SWAP
 				break;
 			default:
+				if (const u32 size = fixed_command_size(opcode))
+				{
+					// recognised but not emulated (widgets, touch, media, ...): consume its
+					// arguments so they are not relayed into the display list as plain words
+					command_size = size;
+					complete = count >= command_size;
+					if (complete && !handled_command(opcode))
+						LOGMASKED(LOG_WARN, "%s: co-processor command %08x is not emulated, %u bytes skipped\n", tag(), cmd, size);
+					break;
+				}
 				LOGMASKED(LOG_WARN, "%s: unsupported co-processor command %08x (%s) at FIFO %03x, %u bytes available; args %08x %08x %08x\n",
 						tag(), cmd, command_name(opcode), r, count,
 						count >= 8 ? word_at(4) : 0,
@@ -1643,6 +1695,65 @@ void ft812_device::copro_execute()
 				append_dl(DL_BITMAP_TRANSFORM_F | (u32(encode(bitmap_f, -(1 << 23), (1 << 23) - 1)) & 0x00ffffff));
 				break;
 			}
+			case 0x02: // CMD_INTERRUPT
+				reg_w32(REG_INT_FLAGS, reg_r32(REG_INT_FLAGS) | INT_CMDFLAG);
+				update_int();
+				break;
+			case 0x19: // CMD_REGREAD, result replaces the last argument in the fifo
+			{
+				const u32 address = word_at(4) & ~3U;
+				u32 value = 0;
+				if (address < RAM_REG_BASE + RAM_REG_SIZE)
+					for (u32 i = 0; i < 4; i++)
+						value |= u32(m_space->read_byte(address + i)) << (8 * i);
+				fifo_put32(8, value);
+				break;
+			}
+			case 0x18: // CMD_MEMCRC
+			{
+				const u32 address = word_at(4);
+				const u32 length = word_at(8);
+				u32 crc = 0;
+				if (address < RAM_G_SIZE && length <= RAM_G_SIZE - address)
+					crc = crc32(crc32(0, Z_NULL, 0), &m_ram_g[address], length);
+				else
+					LOGMASKED(LOG_WARN, "%s: CMD_MEMCRC range %06x+%06x exceeds RAM_G\n", tag(), address, length);
+				fifo_put32(12, crc);
+				break;
+			}
+			case 0x1c: // CMD_MEMZERO
+				fill_memory(word_at(4), 0, word_at(8));
+				break;
+			case 0x1d: // CMD_MEMCPY
+			{
+				const u32 dest = word_at(4);
+				const u32 src = word_at(8);
+				const u32 length = word_at(12);
+				if (dest < RAM_G_SIZE && src < RAM_G_SIZE && length <= RAM_G_SIZE - dest && length <= RAM_G_SIZE - src)
+					std::memmove(&m_ram_g[dest], &m_ram_g[src], length);
+				else
+					LOGMASKED(LOG_WARN, "%s: CMD_MEMCPY %06x <- %06x, %06x bytes exceeds RAM_G\n", tag(), dest, src, length);
+				break;
+			}
+			case 0x23: // CMD_GETPTR
+				fifo_put32(4, m_inflate_addr);
+				break;
+			case 0x32: // CMD_COLDSTART
+				m_copro_fgcolor = 0x00ffffff;
+				m_copro_matrix[0] = 1.0;
+				m_copro_matrix[1] = 0.0;
+				m_copro_matrix[2] = 0.0;
+				m_copro_matrix[3] = 1.0;
+				m_copro_matrix[4] = 0.0;
+				m_copro_matrix[5] = 0.0;
+				break;
+			case 0x33: // CMD_GETMATRIX, a..f as 16.16 in hardware order
+			{
+				static constexpr int order[6] = { 0, 2, 4, 1, 3, 5 };
+				for (u32 i = 0; i < 6; i++)
+					fifo_put32(4 + i * 4, u32(s32(std::clamp(m_copro_matrix[order[i]] * 65536.0, -2147483648.0, 2147483647.0))));
+				break;
+			}
 			default:
 				break;
 			}
@@ -1665,7 +1776,9 @@ void ft812_device::render_dl()
 	m_ctx_stack = {};
 	m_have_vertex = false;
 
-	for (u32 i = 0; i < RAM_DL_SIZE / 4; i++)
+	u32 call_stack[4];
+	u32 call_depth = 0;
+	for (u32 i = 0, steps = 0; i < RAM_DL_SIZE / 4 && steps < RAM_DL_SIZE; i++, steps++)
 	{
 		u32 cmd = get_u32le(&m_ram_dl[i * 4]);
 		if ((cmd & 0xff'000000) == DL_MACRO)
@@ -1827,6 +1940,24 @@ void ft812_device::render_dl()
 			break;
 		case 0x2c'000000: // VERTEX_TRANSLATE_Y
 			m_ctx.vtx_ty = util::sext(cmd & 0x1ffff, 17);
+			break;
+		case 0x1d'000000: // CALL, destination is a display list word index
+			if (call_depth < 4)
+				call_stack[call_depth++] = i;
+			else
+				LOGMASKED(LOG_WARN, "%s: display list CALL stack overflow at DL[%04x]\n", tag(), i * 4);
+			i = (cmd & 0xffff) - 1;
+			break;
+		case 0x1e'000000: // JUMP
+			i = (cmd & 0xffff) - 1;
+			break;
+		case 0x24'000000: // RETURN
+			if (call_depth)
+				i = call_stack[--call_depth];
+			else
+				LOGMASKED(LOG_WARN, "%s: display list RETURN without CALL at DL[%04x]\n", tag(), i * 4);
+			break;
+		case 0x2d'000000: // NOP
 			break;
 		case DL_BLEND_FUNC:
 			m_ctx.blend_src = (cmd >> 3) & 7;
