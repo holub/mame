@@ -359,9 +359,9 @@ void ins8250_uart_device::ins8250_w(offs_t offset, u8 data)
 			}
 			break;
 		case 4:
-			if ( ( m_regs.mcr & 0x1f ) != ( data & 0x1f ) )
+			if ( m_regs.mcr != ( data & mcr_mask() ) )
 			{
-				m_regs.mcr = data & 0x1f;
+				m_regs.mcr = data & mcr_mask();
 
 				update_msr();
 
@@ -385,10 +385,11 @@ void ins8250_uart_device::ins8250_w(offs_t offset, u8 data)
 					}
 					device_serial_interface::rx_w(m_rxd);
 					m_out_dtr_cb((m_regs.mcr & INS8250_MCR_DTR) ? 0 : 1);
-					m_out_rts_cb((m_regs.mcr & INS8250_MCR_RTS) ? 0 : 1);
+					update_rts();
 					m_out_out1_cb((m_regs.mcr & INS8250_MCR_OUT1) ? 0 : 1);
 					m_out_out2_cb((m_regs.mcr & INS8250_MCR_OUT2) ? 0 : 1);
 				}
+				mcr_written();
 			}
 			break;
 		case 5:
@@ -539,6 +540,7 @@ void ns16550_device::rcv_complete()
 	if(m_rnum >= m_rintlvl)
 		trigger_int(COM_INT_PENDING_RECEIVED_DATA_AVAILABLE);
 	set_timer();
+	afe_update();
 }
 
 void ns16550_device::tra_complete()
@@ -719,6 +721,32 @@ void ins8250_uart_device::device_reset()
 	m_out_out2_cb(1);
 }
 
+void ins8250_uart_device::update_rts()
+{
+	if (m_regs.mcr & INS8250_MCR_LOOPBACK)
+		return;
+	m_out_rts_cb(((m_regs.mcr & INS8250_MCR_RTS) && !rts_held()) ? 0 : 1);
+}
+
+void ns16550_device::afe_update()
+{
+	if (!m_afe_capable)
+		return;
+	bool const enabled = (m_regs.mcr & 0x22) == 0x22 && (m_regs.fcr & 1);
+	bool hold = m_afe_hold;
+	if (!enabled)
+		hold = false;
+	else if (m_rnum >= ((m_rintlvl == 14) ? 16 : m_rintlvl))
+		hold = true;
+	else if (m_rnum == 0)
+		hold = false;
+	if (hold != m_afe_hold)
+	{
+		m_afe_hold = hold;
+		update_rts();
+	}
+}
+
 void ns16550_device::device_start()
 {
 	m_timeout = timer_alloc(FUNC(ns16550_device::timeout_expired), this);
@@ -732,6 +760,7 @@ void ns16550_device::device_start()
 	save_item(NAME(m_rnum));
 	save_item(NAME(m_thead));
 	save_item(NAME(m_ttail));
+	save_item(NAME(m_afe_hold));
 }
 
 void ns16550_device::device_reset()
@@ -742,6 +771,7 @@ void ns16550_device::device_reset()
 	m_rhead = m_rtail = m_rnum = 0;
 	m_thead = m_ttail = 0;
 	m_timeout->adjust(attotime::never);
+	m_afe_hold = false;
 	ins8250_uart_device::device_reset();
 }
 
@@ -785,6 +815,7 @@ u8 ns16550_device::pop_rx()
 		m_timeout->adjust(attotime::never);
 		m_regs.lsr &= ~INS8250_LSR_DR;
 	}
+	afe_update();
 
 	return data;
 }
@@ -818,4 +849,5 @@ void ns16550_device::set_fcr(u8 data)
 	m_rintlvl = bytes_per_int[(data>>6)&3];
 	m_regs.iir |= 0xc0;
 	m_regs.fcr = data & 0xc9;
+	afe_update();
 }

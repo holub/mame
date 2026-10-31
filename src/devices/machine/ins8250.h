@@ -61,6 +61,12 @@ protected:
 	void trigger_int(int flag);
 	void clear_int(int flag);
 
+	// RTS output: MCR bit 1, unless a TL16C550C-style auto-RTS holds it off
+	virtual bool rts_held() const { return false; }
+	virtual u8 mcr_mask() const { return 0x1f; }
+	virtual void mcr_written() { }
+	void update_rts();
+
 	void update_baud_rate();
 
 	const dev_type m_device_type;
@@ -114,7 +120,17 @@ class ns16550_device : public ins8250_uart_device
 {
 public:
 	ns16550_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
+
+	// TL16C550C auto flow: MCR bit 5 (AFE) with bit 1 enables auto-RTS.
+	// RTS is deasserted when the RX FIFO reaches the trigger level (the
+	// 16th character for trigger 14) and reasserted once reads of RBR have
+	// emptied the FIFO.  Auto-CTS is not modelled.
+	void set_auto_rts_capable(bool state) { m_afe_capable = state; }
 protected:
+	virtual bool rts_held() const override { return m_afe_hold; }
+	virtual u8 mcr_mask() const override { return m_afe_capable ? 0x3f : 0x1f; }
+	virtual void mcr_written() override { afe_update(); }
+
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
 
@@ -134,6 +150,9 @@ private:
 	int m_rhead, m_rtail, m_rnum;
 	int m_thead, m_ttail;
 	emu_timer *m_timeout;
+	bool m_afe_capable = false;
+	bool m_afe_hold = false;
+	void afe_update();
 };
 
 class pc16552_device : public device_t

@@ -10,8 +10,9 @@
     in reset.  -OUT2 drives the module's program-mode strap and is left
     unconnected here.
 
-    The emulated 16550 does not implement the TL16C550C auto-flow (AFE)
-    mode: RTS follows MCR bit 1 only, CTS is reported in MSR.
+    TL16C550C auto-RTS (MCR bits 5 and 1) is modelled by the 16550 device:
+    RTS drops when the RX FIFO reaches its trigger level and returns once
+    the FIFO has been read empty.  Auto-CTS is not modelled.
 
 ***************************************************************************/
 
@@ -70,6 +71,7 @@ private:
 void isa8_sprinter_esp_device::device_add_mconfig(machine_config &config)
 {
 	NS16550(config, m_uart, XTAL(14'745'600));
+	m_uart->set_auto_rts_capable(true); // TL16C550C: MCR bit 5 enables auto-RTS
 	m_uart->out_tx_callback().set(m_esp, FUNC(rs232_port_device::write_txd));
 	m_uart->out_dtr_callback().set(m_esp, FUNC(rs232_port_device::write_dtr));
 	m_uart->out_rts_callback().set(m_esp, FUNC(rs232_port_device::write_rts));
