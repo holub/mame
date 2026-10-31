@@ -3292,6 +3292,8 @@ if BUSES["ISA"] then
 		MAME_DIR .. "src/devices/bus/isa/xsu_cards.h",
 		MAME_DIR .. "src/devices/bus/isa/xtide.cpp",
 		MAME_DIR .. "src/devices/bus/isa/xtide.h",
+		MAME_DIR .. "src/devices/bus/isa/sprinter_esp.cpp",
+		MAME_DIR .. "src/devices/bus/isa/sprinter_esp.h",
 		MAME_DIR .. "src/devices/bus/isa/zxbus_adapter.cpp",
 		MAME_DIR .. "src/devices/bus/isa/zxbus_adapter.h",
 	}
