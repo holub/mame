@@ -50,6 +50,7 @@ TODO:
 
 #include "beta_m.h"
 #include "spec128.h"
+#include "sprinter_accel.h"
 
 #include "bus/ata/atapicdr.h"
 #include "bus/ata/ataintf.h"
@@ -2067,6 +2068,9 @@ void sprinter_state::sprinter(machine_config &config)
 	m_maincpu->irqack_cb().set(m_irqs, FUNC(input_merger_any_high_device::in_clear<2>));
 	m_maincpu->irqack_cb().append(m_irqs, FUNC(input_merger_any_high_device::in_clear<1>));
 	m_maincpu->irqack_cb().append(m_irqs, FUNC(input_merger_any_high_device::in_clear<0>));
+
+	// read-only mirror of the z80 bus window for the debugger (dasm ... ,accel)
+	SPRINTER_ACCEL(config, "accel", 0).set_bus(m_maincpu, AS_PROGRAM);
 
 	DS12885(config, m_rtc, XTAL(32'768)); // should be DS12887A
 	ATA_INTERFACE(config, m_ata[0]).options(sprinter_ata_devices, "hdd", "cdrom", false);
