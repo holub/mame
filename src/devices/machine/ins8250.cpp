@@ -827,6 +827,7 @@ void ns16550_device::set_fcr(u8 data)
 	{
 		m_regs.fcr = 0;
 		m_regs.iir &= ~0xc8;
+		afe_update();
 		return;
 	}
 	if(!(m_regs.fcr & 1) && (data & 1))

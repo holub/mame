@@ -5,10 +5,15 @@
     Sprinter-WiFi / Sprinter-ESP ISA card
 
     The card decodes COM3 (0x03e8-0x03ef) and uses a TL16C550C UART clocked
-    by 14.7456 MHz (divisor 8 = 115200 bit/s).  The UART -OUT1 pin drives
-    the RESET input of the ESP8266 module: MCR bit 2 set holds the module
-    in reset.  -OUT2 drives the module's program-mode strap and is left
-    unconnected here.
+    by 14.7456 MHz (divisor 8 = 115200 bit/s).  INTR drives IRQ3.  The UART
+    -OUT1 pin drives the RESET input of the ESP8266 module: MCR bit 2 set
+    holds the module in reset.  -OUT2 drives the module's GPIO0 program-mode
+    strap and is left unconnected here.  ISA RESDRV only resets the UART and
+    is not modelled.
+
+    The ESP8266 defaults to the AT 1.1 firmware emulation; the ESP-AT 2.x
+    command set is available as a BIOS option, e.g.
+    -isa1:sprinter_esp:esp esp8266_at,bios=at22
 
     TL16C550C auto-RTS (MCR bits 5 and 1) is modelled by the 16550 device:
     RTS drops when the RX FIFO reaches its trigger level and returns once
@@ -28,14 +33,23 @@
 
 namespace {
 
-static void sprinter_esp_rs232_devices(device_slot_interface &device)
+void sprinter_esp_rs232_devices(device_slot_interface &device)
 {
 	device.option_add("esp8266_at", ESP8266_AT);
 	device.option_add("null_modem", NULL_MODEM);
 	device.option_add("terminal", SERIAL_TERMINAL);
 }
 
-static DEVICE_INPUT_DEFAULTS_START(sprinter_esp_rs232_defaults)
+// ESP-AT power-up settings: 115200 8N1
+DEVICE_INPUT_DEFAULTS_START(sprinter_esp_terminal_defaults)
+	DEVICE_INPUT_DEFAULTS("RS232_TXBAUD", 0xff, RS232_BAUD_115200)
+	DEVICE_INPUT_DEFAULTS("RS232_RXBAUD", 0xff, RS232_BAUD_115200)
+	DEVICE_INPUT_DEFAULTS("RS232_DATABITS", 0xff, RS232_DATABITS_8)
+	DEVICE_INPUT_DEFAULTS("RS232_PARITY", 0xff, RS232_PARITY_NONE)
+	DEVICE_INPUT_DEFAULTS("RS232_STOPBITS", 0xff, RS232_STOPBITS_1)
+DEVICE_INPUT_DEFAULTS_END
+
+DEVICE_INPUT_DEFAULTS_START(sprinter_esp_null_modem_defaults)
 	DEVICE_INPUT_DEFAULTS("RS232_TXBAUD", 0xff, RS232_BAUD_115200)
 	DEVICE_INPUT_DEFAULTS("RS232_RXBAUD", 0xff, RS232_BAUD_115200)
 	DEVICE_INPUT_DEFAULTS("RS232_DATABITS", 0xff, RS232_DATABITS_8)
@@ -61,6 +75,7 @@ protected:
 	virtual void device_start() override ATTR_COLD;
 
 private:
+	void irq_w(int state) { m_isa->irq3_w(state); }
 	void out1_w(int state);
 
 	required_device<ns16550_device> m_uart;
@@ -70,16 +85,17 @@ private:
 
 void isa8_sprinter_esp_device::device_add_mconfig(machine_config &config)
 {
-	NS16550(config, m_uart, XTAL(14'745'600));
+	NS16550(config, m_uart, 14.7456_MHz_XTAL);
 	m_uart->set_auto_rts_capable(true); // TL16C550C: MCR bit 5 enables auto-RTS
+	m_uart->out_int_callback().set(FUNC(isa8_sprinter_esp_device::irq_w));
 	m_uart->out_tx_callback().set(m_esp, FUNC(rs232_port_device::write_txd));
 	m_uart->out_dtr_callback().set(m_esp, FUNC(rs232_port_device::write_dtr));
 	m_uart->out_rts_callback().set(m_esp, FUNC(rs232_port_device::write_rts));
 	m_uart->out_out1_callback().set(FUNC(isa8_sprinter_esp_device::out1_w));
 
 	RS232_PORT(config, m_esp, sprinter_esp_rs232_devices, "esp8266_at");
-	m_esp->set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(sprinter_esp_rs232_defaults));
-	m_esp->set_option_device_input_defaults("terminal", DEVICE_INPUT_DEFAULTS_NAME(sprinter_esp_rs232_defaults));
+	m_esp->set_option_device_input_defaults("null_modem", DEVICE_INPUT_DEFAULTS_NAME(sprinter_esp_null_modem_defaults));
+	m_esp->set_option_device_input_defaults("terminal", DEVICE_INPUT_DEFAULTS_NAME(sprinter_esp_terminal_defaults));
 	m_esp->rxd_handler().set(m_uart, FUNC(ins8250_uart_device::rx_w));
 	m_esp->dcd_handler().set(m_uart, FUNC(ins8250_uart_device::dcd_w));
 	m_esp->dsr_handler().set(m_uart, FUNC(ins8250_uart_device::dsr_w));
