@@ -15,9 +15,9 @@
     command set is available as a BIOS option, e.g.
     -isa1:sprinter_esp:esp esp8266_at,bios=at22
 
-    TL16C550C auto-RTS (MCR bits 5 and 1) is modelled by the 16550 device:
-    RTS drops when the RX FIFO reaches its trigger level and returns once
-    the FIFO has been read empty.  Auto-CTS is not modelled.
+    TL16C550C auto-RTS (MCR bits 5 and 1) is modelled: RTS drops when the
+    RX FIFO reaches its trigger level and returns once the FIFO has been
+    read empty.  Auto-CTS is not modelled.
 
 ***************************************************************************/
 
@@ -78,15 +78,14 @@ private:
 	void irq_w(int state) { m_isa->irq3_w(state); }
 	void out1_w(int state);
 
-	required_device<ns16550_device> m_uart;
+	required_device<tl16c550c_device> m_uart;
 	required_device<rs232_port_device> m_esp;
 };
 
 
 void isa8_sprinter_esp_device::device_add_mconfig(machine_config &config)
 {
-	NS16550(config, m_uart, 14.7456_MHz_XTAL);
-	m_uart->set_auto_rts_capable(true); // TL16C550C: MCR bit 5 enables auto-RTS
+	TL16C550C(config, m_uart, 14.7456_MHz_XTAL);
 	m_uart->out_int_callback().set(FUNC(isa8_sprinter_esp_device::irq_w));
 	m_uart->out_tx_callback().set(m_esp, FUNC(rs232_port_device::write_txd));
 	m_uart->out_dtr_callback().set(m_esp, FUNC(rs232_port_device::write_dtr));
