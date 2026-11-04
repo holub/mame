@@ -69,6 +69,10 @@ PC16550D
 Same as NS16550A with subtle flaws corrected. This is revision D of the
 16550 family and is the latest design available from National Semiconductor.
 
+TL16C550C
+Texas Instruments CMOS NS16550A-compatible UART with auto flow control:
+MCR bit 5 (AFE) enables auto-RTS together with MCR bit 1, and auto-CTS.
+
 Intel 82050
 Essentially a NS16450 squeezed into a 28-pin package with some minor functions
 eliminated. Can be strapped for either a 18.432 MHz XTAL (divided by 10 to
@@ -106,6 +110,7 @@ DEFINE_DEVICE_TYPE(INS8250,  ins8250_device, "ins8250",  "National Semiconductor
 DEFINE_DEVICE_TYPE(NS16450,  ns16450_device, "ns16450",  "National Semiconductor NS16450 UART")
 DEFINE_DEVICE_TYPE(NS16550,  ns16550_device, "ns16550",  "National Semiconductor NS16550 UART")
 DEFINE_DEVICE_TYPE(PC16552D, pc16552_device, "pc16552d", "National Semiconductor PC16552D UART")
+DEFINE_DEVICE_TYPE(TL16C550C, tl16c550c_device, "tl16c550c", "Texas Instruments TL16C550C UART")
 
 ins8250_uart_device::ins8250_uart_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock, dev_type device_type)
 	: device_t(mconfig, type, tag, owner, clock)
@@ -138,7 +143,18 @@ ns16450_device::ns16450_device(const machine_config &mconfig, const char *tag, d
 }
 
 ns16550_device::ns16550_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
-	: ins8250_uart_device(mconfig, NS16550, tag, owner, clock, dev_type::NS16550)
+	: ns16550_device(mconfig, NS16550, tag, owner, clock)
+{
+}
+
+ns16550_device::ns16550_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock)
+	: ins8250_uart_device(mconfig, type, tag, owner, clock, dev_type::NS16550)
+{
+}
+
+tl16c550c_device::tl16c550c_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
+	: ns16550_device(mconfig, TL16C550C, tag, owner, clock)
+	, m_afe_hold(false)
 {
 }
 
@@ -359,9 +375,9 @@ void ins8250_uart_device::ins8250_w(offs_t offset, u8 data)
 			}
 			break;
 		case 4:
-			if ( ( m_regs.mcr & 0x1f ) != ( data & 0x1f ) )
+			if ( m_regs.mcr != ( data & mcr_mask() ) )
 			{
-				m_regs.mcr = data & 0x1f;
+				m_regs.mcr = data & mcr_mask();
 
 				update_msr();
 
@@ -385,10 +401,11 @@ void ins8250_uart_device::ins8250_w(offs_t offset, u8 data)
 					}
 					device_serial_interface::rx_w(m_rxd);
 					m_out_dtr_cb((m_regs.mcr & INS8250_MCR_DTR) ? 0 : 1);
-					m_out_rts_cb((m_regs.mcr & INS8250_MCR_RTS) ? 0 : 1);
+					update_rts();
 					m_out_out1_cb((m_regs.mcr & INS8250_MCR_OUT1) ? 0 : 1);
 					m_out_out2_cb((m_regs.mcr & INS8250_MCR_OUT2) ? 0 : 1);
 				}
+				mcr_written();
 			}
 			break;
 		case 5:
@@ -539,6 +556,7 @@ void ns16550_device::rcv_complete()
 	if(m_rnum >= m_rintlvl)
 		trigger_int(COM_INT_PENDING_RECEIVED_DATA_AVAILABLE);
 	set_timer();
+	rx_fifo_changed();
 }
 
 void ns16550_device::tra_complete()
@@ -719,6 +737,13 @@ void ins8250_uart_device::device_reset()
 	m_out_out2_cb(1);
 }
 
+void ins8250_uart_device::update_rts()
+{
+	if (m_regs.mcr & INS8250_MCR_LOOPBACK)
+		return;
+	m_out_rts_cb(((m_regs.mcr & INS8250_MCR_RTS) && !rts_held()) ? 0 : 1);
+}
+
 void ns16550_device::device_start()
 {
 	m_timeout = timer_alloc(FUNC(ns16550_device::timeout_expired), this);
@@ -785,6 +810,7 @@ u8 ns16550_device::pop_rx()
 		m_timeout->adjust(attotime::never);
 		m_regs.lsr &= ~INS8250_LSR_DR;
 	}
+	rx_fifo_changed();
 
 	return data;
 }
@@ -796,6 +822,7 @@ void ns16550_device::set_fcr(u8 data)
 	{
 		m_regs.fcr = 0;
 		m_regs.iir &= ~0xc8;
+		rx_fifo_changed();
 		return;
 	}
 	if(!(m_regs.fcr & 1) && (data & 1))
@@ -818,4 +845,38 @@ void ns16550_device::set_fcr(u8 data)
 	m_rintlvl = bytes_per_int[(data>>6)&3];
 	m_regs.iir |= 0xc0;
 	m_regs.fcr = data & 0xc9;
+	rx_fifo_changed();
+}
+
+void tl16c550c_device::device_start()
+{
+	ns16550_device::device_start();
+	save_item(NAME(m_afe_hold));
+}
+
+void tl16c550c_device::device_reset()
+{
+	m_afe_hold = false;
+	ns16550_device::device_reset();
+}
+
+// Auto-RTS needs MCR bits 5 and 1 and the FIFOs enabled.  RTS is held off once
+// the RX FIFO reaches the trigger level (the 16th character for trigger 14)
+// and released when reads of RBR have emptied it.
+void tl16c550c_device::afe_update()
+{
+	bool const enabled = ((m_regs.mcr & 0x22) == 0x22) && (m_regs.fcr & 1);
+	int const level = rx_trigger_level();
+	bool hold = m_afe_hold;
+	if (!enabled)
+		hold = false;
+	else if (rx_fifo_count() >= ((level == 14) ? 16 : level))
+		hold = true;
+	else if (!rx_fifo_count())
+		hold = false;
+	if (hold != m_afe_hold)
+	{
+		m_afe_hold = hold;
+		update_rts();
+	}
 }

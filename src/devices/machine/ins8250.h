@@ -61,6 +61,12 @@ protected:
 	void trigger_int(int flag);
 	void clear_int(int flag);
 
+	// RTS output: MCR bit 1, unless auto-RTS flow control holds it off
+	virtual bool rts_held() const { return false; }
+	virtual u8 mcr_mask() const { return 0x1f; }
+	virtual void mcr_written() { }
+	void update_rts();
+
 	void update_baud_rate();
 
 	const dev_type m_device_type;
@@ -115,6 +121,8 @@ class ns16550_device : public ins8250_uart_device
 public:
 	ns16550_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
 protected:
+	ns16550_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock);
+
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
 
@@ -123,6 +131,11 @@ protected:
 	virtual void set_fcr(u8 data) override;
 	virtual void push_tx(u8 data) override;
 	virtual u8 pop_rx() override;
+
+	// called whenever the RX FIFO fill level or FIFO enable may have changed
+	virtual void rx_fifo_changed() { }
+	int rx_fifo_count() const { return m_rnum; }
+	int rx_trigger_level() const { return m_rintlvl; }
 
 	TIMER_CALLBACK_MEMBER(timeout_expired);
 private:
@@ -134,6 +147,27 @@ private:
 	int m_rhead, m_rtail, m_rnum;
 	int m_thead, m_ttail;
 	emu_timer *m_timeout;
+};
+
+// TL16C550C: auto-RTS is modelled, auto-CTS is not
+class tl16c550c_device : public ns16550_device
+{
+public:
+	tl16c550c_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock = 0);
+
+protected:
+	virtual void device_start() override ATTR_COLD;
+	virtual void device_reset() override ATTR_COLD;
+
+	virtual bool rts_held() const override { return m_afe_hold; }
+	virtual u8 mcr_mask() const override { return 0x3f; }
+	virtual void mcr_written() override { afe_update(); }
+	virtual void rx_fifo_changed() override { afe_update(); }
+
+private:
+	void afe_update();
+
+	bool m_afe_hold;
 };
 
 class pc16552_device : public device_t
@@ -156,5 +190,6 @@ DECLARE_DEVICE_TYPE(PC16552D, pc16552_device)
 DECLARE_DEVICE_TYPE(INS8250,  ins8250_device)
 DECLARE_DEVICE_TYPE(NS16450,  ns16450_device)
 DECLARE_DEVICE_TYPE(NS16550,  ns16550_device)
+DECLARE_DEVICE_TYPE(TL16C550C, tl16c550c_device)
 
 #endif // MAME_MACHINE_INS8250_H
