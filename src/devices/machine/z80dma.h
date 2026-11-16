@@ -123,8 +123,8 @@ protected:
 	int is_ready();
 	void interrupt_check();
 	void trigger_interrupt(int level);
-	void do_read();
-	void do_write();
+	virtual void do_read();
+	virtual void do_write();
 	void do_transfer_write();
 	void do_search();
 	void setup_next_read(int rr);
@@ -146,6 +146,7 @@ protected:
 	u8  m_num_follow;
 	u8  m_cur_follow;
 	u8  m_regs_follow[5];
+	u8  m_latch;
 
 private:
 	// device_z80daisy_interface implementation
@@ -178,7 +179,6 @@ private:
 	int  m_busrq = CLEAR_LINE;
 	int  m_busrq_ack;
 	bool m_is_pulse;
-	u8   m_latch;
 
 	// interrupts
 	int m_iei;                  // interrupt enable input
