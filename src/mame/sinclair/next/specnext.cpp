@@ -188,6 +188,7 @@ protected:
 	u8 dma_r(bool dma_mode);
 	void dma_w(bool dma_mode, u8 data);
 	u8 dma_mreq_r(offs_t offset);
+	u8 dma_sram_r(offs_t offset);
 	void update_dma_delay();
 	u8 spi_data_r();
 	void spi_data_w(u8 data);
@@ -218,8 +219,6 @@ protected:
 	required_device<z80n_device> m_maincpu;
 
 private:
-	static const u8 G_VERSION = 0x32; // 3.02
-	static const u8 G_SUB_VERSION = 0x04;
 	static const u8 G_VIDEO_INC = 0b11;
 	static const u16 UTM_FALLBACK_PEN = 0xa00;
 
@@ -234,6 +233,9 @@ private:
 
 	u8 g_machine_id() { return m_machine_id; }
 	u8 g_board_issue() { return m_board_issue; }
+	bool core_30303() const { return system_bios() >= m_bios_30303; }
+	u8 g_version() const { return core_30303() ? 0x33 : 0x32; } // 3.03 : 3.02
+	u8 g_sub_version() const { return core_30303() ? 0x03 : 0x04; }
 	bool machine_type_48() const { return m_nr_03_machine_type == 0 || m_nr_03_machine_type == 1; }
 	bool machine_type_128() const { return m_nr_03_machine_type == 2 || m_nr_03_machine_type == 4; }
 	bool machine_type_p3() const { return !machine_type_48() && !machine_type_128(); }
@@ -247,8 +249,8 @@ private:
 	void nr_07_cpu_speed_w(u8 data);
 
 	void nr_0a_mf_type_w(u8 data) { m_nr_0a_mf_type = data; m_mf->mf_mode_w(m_nr_0a_mf_type); }
-	void nr_12_layer2_active_bank_w(u8 data) { m_nr_12_layer2_active_bank = data; bank_update(0, 6); m_layer2->layer2_active_bank_w(m_nr_12_layer2_active_bank); }
-	void nr_13_layer2_shadow_bank_w(u8 data) { m_nr_13_layer2_shadow_bank = data; bank_update(0, 6); }
+	void nr_12_layer2_active_bank_w(u8 data) { m_nr_12_layer2_active_bank = data; bank_update(0, 6); m_layer2->layer2_active_bank_w(m_nr_12_layer2_active_bank); m_dma->layer2_active_bank_w(m_nr_12_layer2_active_bank); }
+	void nr_13_layer2_shadow_bank_w(u8 data) { m_nr_13_layer2_shadow_bank = data; bank_update(0, 6); m_dma->layer2_shadow_bank_w(m_nr_13_layer2_shadow_bank); }
 	void nr_14_global_transparent_rgb_w(u8 data);
 	void nr_15_sprite_priority_w(bool data) { m_nr_15_sprite_priority = data; m_sprites->zero_on_top_w(m_nr_15_sprite_priority); }
 	void nr_15_sprite_border_clip_en_w(bool data) { m_nr_15_sprite_border_clip_en = data; m_sprites->border_clip_en_w(m_nr_15_sprite_border_clip_en); }
@@ -299,7 +301,7 @@ private:
 	void nr_6e_tilemap_base_w(bool data7, u8 data5_0) { m_nr_6e_tilemap_base_7 = data7; m_nr_6e_tilemap_base = data5_0; m_tiles->tm_map_base_w((m_nr_6e_tilemap_base_7 << 6) | m_nr_6e_tilemap_base); }
 	void nr_6f_tilemap_tiles_w(bool data7, u8 data5_0) { m_nr_6f_tilemap_tiles_7 = data7; m_nr_6f_tilemap_tiles = data5_0; m_tiles->tm_tile_base_w((m_nr_6f_tilemap_tiles_7 << 6) | m_nr_6f_tilemap_tiles); }
 
-	void nr_70_layer2_resolution_w(u8 data) { m_nr_70_layer2_resolution = data; m_layer2->resolution_w(m_nr_70_layer2_resolution); }
+	void nr_70_layer2_resolution_w(u8 data) { m_nr_70_layer2_resolution = data; m_layer2->resolution_w(m_nr_70_layer2_resolution); m_dma->layer2_resolution_w(m_nr_70_layer2_resolution); }
 	void nr_70_layer2_palette_offset_w(u8 data) { m_nr_70_layer2_palette_offset = data; m_layer2->palette_offset_w(m_nr_70_layer2_palette_offset); }
 	void nr_71_layer2_scrollx_msb_w(bool data) { m_nr_71_layer2_scrollx_msb = data; m_layer2->scroll_x_w((m_nr_71_layer2_scrollx_msb << 8) | m_nr_16_layer2_scrollx); }
 
@@ -409,6 +411,7 @@ private:
 
 	u8 m_machine_id;
 	u8 m_board_issue;
+	u8 m_bios_30303;
 	u16 m_ram_pages;
 
 	bitmap_rgb32 m_blendprio_bitmap;
@@ -1616,6 +1619,15 @@ u8 specnext_state::dma_mreq_r(offs_t offset)
 	return m_program.read_byte(offset);
 }
 
+u8 specnext_state::dma_sram_r(offs_t offset)
+{
+	if (m_nr_07_cpu_speed == 0b11)
+	{
+		m_dma->adjust_wait(1);
+	}
+	return m_ram->pointer()[offset & (m_ram->size() - 1)];
+}
+
 void specnext_state::update_dma_delay()
 {
 	const u16 dma_int_mask = (m_nr_cc_dma_int_en_0_7 << INT_PRIORITY_NMI) | ((m_nr_cc_dma_int_en_0_10 & 1) << INT_PRIORITY_ULA)
@@ -1635,7 +1647,7 @@ u8 specnext_state::reg_r(offs_t nr_register)
 		port_253b_dat = g_machine_id();
 		break;
 	case 0x01:
-		port_253b_dat = G_VERSION;
+		port_253b_dat = g_version();
 		break;
 	case 0x02:
 		port_253b_dat = (m_nr_02_bus_reset << 7) | (0b00 << 5) | (nr_02_iotrap() << 4) | (m_nr_02_generate_mf_nmi << 3) | (m_nr_02_generate_divmmc_nmi << 2) | BIT(m_nr_02_reset_type, 0, 2);
@@ -1669,7 +1681,7 @@ u8 specnext_state::reg_r(offs_t nr_register)
 		port_253b_dat = (m_nr_0b_joy_iomode_en << 7) | (0 << 6) | (m_nr_0b_joy_iomode << 4) | (0b000 << 1) | m_nr_0b_joy_iomode_0;
 		break;
 	case 0x0e:
-		port_253b_dat = G_SUB_VERSION;
+		port_253b_dat = g_sub_version();
 		break;
 	case 0x0f:
 		port_253b_dat = (0b0000 << 4) | g_board_issue();
@@ -3789,6 +3801,7 @@ void specnext_state::reset_hard()
 	m_video_test_pattern_active = 0;
 
 	m_dma->dma_mode_w(0);
+	m_dma->ddma_en_w(core_30303());
 	// nmi_mf = 0;
 	// nmi_divmmc = 0;
 	// nmi_expbus = 0;
@@ -4255,6 +4268,8 @@ void specnext_state::tbblue(machine_config &config)
 	m_dma->out_mreq_callback().set([this](offs_t offset, u8 data) { m_program.write_byte(offset, data); });
 	m_dma->in_iorq_callback().set([this](offs_t offset) { return m_io.read_byte(offset); });
 	m_dma->out_iorq_callback().set([this](offs_t offset, u8 data) { m_io.write_byte(offset, data); });
+	m_dma->in_sram_callback().set(FUNC(specnext_state::dma_sram_r));
+	m_dma->out_sram_callback().set([this](offs_t offset, u8 data) { m_ram->pointer()[offset & (m_ram->size() - 1)] = data; });
 
 	ADDRESS_MAP_BANK(config, m_regs_map).set_map(&specnext_state::map_regs).set_options(ENDIANNESS_LITTLE, 8, 8, 0);
 
@@ -4365,6 +4380,7 @@ void specnext_state::tbblue(machine_config &config)
 
 	m_machine_id = 0x08;
 	m_board_issue = 0;
+	m_bios_30303 = 7;
 	m_ram->set_default_size("2M").set_extra_options("1M,4M").set_default_value(0);
 }
 
@@ -4396,6 +4412,7 @@ void specnext_state::ks3(machine_config &config)
 
 	m_machine_id = 0x0a;
 	m_board_issue = 3;
+	m_bios_30303 = 5;
 	m_ram->set_default_size("4M").set_extra_options(nullptr);
 }
 
@@ -4427,6 +4444,10 @@ ROM_START(tbblue)
 	ROM_SYSTEM_BIOS(5, "v30204ab", "Anti-Brick Core v3.02.04")
 	ROMX_LOAD( "boot-30204-ab.bin", 0x0000, 0x2000, CRC(85d69a61) SHA1(7c77cd7f16a37581eff539f9a0fd9a12edd34b78), ROM_BIOS(5))
 	ROMX_LOAD( "boot-30204.bin", 0x2000, 0x2000, CRC(ab242e0f) SHA1(a88f1a4dadb4584a2a25d22f1dbb0fe3092349ba), ROM_BIOS(5))
+
+	ROM_SYSTEM_BIOS(6, "v30303", "Next Core v3.03.03")
+	ROMX_LOAD( "boot-30303.bin", 0x0000, 0x2000, CRC(9368fbe4) SHA1(abfe5f267e1ba988b729402317e35f7040873ddb), ROM_BIOS(6))
+	ROMX_LOAD( "boot-30303.bin", 0x2000, 0x2000, CRC(9368fbe4) SHA1(abfe5f267e1ba988b729402317e35f7040873ddb), ROM_BIOS(6))
 ROM_END
 
 #define rom_specnext_ks1    rom_tbblue
@@ -4451,6 +4472,10 @@ ROM_START(specnext_ks3)
 	ROM_SYSTEM_BIOS(3, "v30204ab", "Anti-Brick Core v3.02.04")
 	ROMX_LOAD( "boot-30204-ab.bin", 0x0000, 0x2000, CRC(85d69a61) SHA1(7c77cd7f16a37581eff539f9a0fd9a12edd34b78), ROM_BIOS(3))
 	ROMX_LOAD( "boot-30204.bin", 0x2000, 0x2000, CRC(ab242e0f) SHA1(a88f1a4dadb4584a2a25d22f1dbb0fe3092349ba), ROM_BIOS(3))
+
+	ROM_SYSTEM_BIOS(4, "v30303", "Next Core v3.03.03")
+	ROMX_LOAD( "boot-30303.bin", 0x0000, 0x2000, CRC(9368fbe4) SHA1(abfe5f267e1ba988b729402317e35f7040873ddb), ROM_BIOS(4))
+	ROMX_LOAD( "boot-30303.bin", 0x2000, 0x2000, CRC(9368fbe4) SHA1(abfe5f267e1ba988b729402317e35f7040873ddb), ROM_BIOS(4))
 ROM_END
 
 } // Anonymous namespace
