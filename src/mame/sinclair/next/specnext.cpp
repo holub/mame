@@ -197,6 +197,7 @@ protected:
 	template <u8 Reg> u8 uart_reg_r();
 	template <u8 Reg> void uart_reg_w(u8 data);
 	template <u8 Uart> void txd_w(int state);
+	template <u8 Uart> void uart_rx_near_full_w(int state);
 	void rxd_w(int state);
 	void palette_val_w(u8 nr_palette_priority, u16 nr_palette_value);
 	u8 port_ff_r();
@@ -619,6 +620,7 @@ private:
 
 	bool m_pulse_int_n;
 	u16 m_im2_int_status; // u14
+	u16 m_im2_uart_status; // u14
 	u8 m_nr_09_scanlines; // u2
 
 	u8 m_eff_nr_03_machine_timing; // u3
@@ -1363,6 +1365,17 @@ template <u8 Uart> void specnext_state::txd_w(int state)
 		m_midi_out->write_txd(state);
 }
 
+// status is set even when the source is disabled in nr_c6
+template <u8 Uart> void specnext_state::uart_rx_near_full_w(int state)
+{
+	const u8 enable = Uart ? m_nr_c6_int_en_2_654 : m_nr_c6_int_en_2_210;
+	specnext_im2_device &im2 = Uart ? *m_im2_uart1_rx : *m_im2_uart0_rx;
+	if (state)
+		m_im2_uart_status |= 1 << (Uart ? INT_PRIORITY_UART1_RX : INT_PRIORITY_UART0_RX);
+	if (!state || (enable & 0b011))
+		im2.irq_w(state);
+}
+
 void specnext_state::rxd_w(int state)
 {
 	if (m_nr_0b_joy_iomode_en && BIT(m_nr_0b_joy_iomode, 1))
@@ -2049,8 +2062,11 @@ u8 specnext_state::reg_r(offs_t nr_register)
 		port_253b_dat = BIT(m_im2_int_status, INT_PRIORITY_CTC, 8);
 		break;
 	case 0xca:
-		port_253b_dat = (0b0 << 7) | (BIT(m_im2_int_status, INT_PRIORITY_UART1_TX) <<  6) | (BIT(m_im2_int_status, INT_PRIORITY_UART1_RX) << 5) | (BIT(m_im2_int_status, INT_PRIORITY_UART1_RX) << 4)
-					| (0b0 << 3) | (BIT(m_im2_int_status, INT_PRIORITY_UART0_TX) << 2) | (BIT(m_im2_int_status, INT_PRIORITY_UART0_RX) << 1) | BIT(m_im2_int_status, INT_PRIORITY_UART0_RX);
+		{
+			const u16 status = m_im2_int_status | m_im2_uart_status;
+			port_253b_dat = (0b0 << 7) | (BIT(status, INT_PRIORITY_UART1_TX) <<  6) | (BIT(status, INT_PRIORITY_UART1_RX) << 5) | (BIT(status, INT_PRIORITY_UART1_RX) << 4)
+						| (0b0 << 3) | (BIT(status, INT_PRIORITY_UART0_TX) << 2) | (BIT(status, INT_PRIORITY_UART0_RX) << 1) | BIT(status, INT_PRIORITY_UART0_RX);
+		}
 		break;
 	case 0xcc:
 		port_253b_dat = (m_nr_cc_dma_int_en_0_7 << 7) | (0b00000 << 2) | m_nr_cc_dma_int_en_0_10;
@@ -2707,6 +2723,10 @@ void specnext_state::reg_w(offs_t nr_wr_reg, u8 nr_wr_dat)
 	case 0xc6:
 		m_nr_c6_int_en_2_654 = (BIT(nr_wr_dat, 6) << 2) | (BIT(nr_wr_dat, 5) << 1) | BIT(nr_wr_dat, 4);
 		m_nr_c6_int_en_2_210 = (BIT(nr_wr_dat, 2) << 2) | (BIT(nr_wr_dat, 1) << 1) | BIT(nr_wr_dat, 0);
+		break;
+	case 0xca:
+		m_im2_uart_status &= ~((BIT(nr_wr_dat, 6) << INT_PRIORITY_UART1_TX) | ((BIT(nr_wr_dat, 5) | BIT(nr_wr_dat, 4)) << INT_PRIORITY_UART1_RX)
+			| (BIT(nr_wr_dat, 2) << INT_PRIORITY_UART0_TX) | ((BIT(nr_wr_dat, 1) | BIT(nr_wr_dat, 0)) << INT_PRIORITY_UART0_RX));
 		break;
 	case 0xcc:
 		m_nr_cc_dma_int_en_0_7 = BIT(nr_wr_dat, 7);
@@ -3739,6 +3759,7 @@ void specnext_state::machine_start()
 	save_item(NAME(m_nr_fa_xadc_d1));
 	save_item(NAME(m_pulse_int_n));
 	save_item(NAME(m_im2_int_status));
+	save_item(NAME(m_im2_uart_status));
 	save_item(NAME(m_nr_09_scanlines));
 	save_item(NAME(m_eff_nr_03_machine_timing));
 	save_item(NAME(m_eff_nr_05_5060));
@@ -3947,6 +3968,7 @@ void specnext_state::machine_reset()
 	//im2_dma_delay  = 0;
 	m_pulse_int_n  = 1;
 	m_im2_int_status = 0x00;
+	m_im2_uart_status = 0x00;
 	m_nr_c2_retn_address_lsb  = 0x00;
 	m_nr_c3_retn_address_msb  = 0x00;
 	//z80_stackless_retn_en  = 0;
@@ -4285,7 +4307,7 @@ void specnext_state::tbblue(machine_config &config)
 	SPECNEXT_UART(config, m_uart[0], 28_MHz_XTAL);
 	m_uart[0]->out_txd_callback().set("rs232_esp", FUNC(rs232_port_device::write_txd));
 	m_uart[0]->out_txd_callback().append(FUNC(specnext_state::txd_w<0>));
-	m_uart[0]->out_rx_full_near_callback().set(m_im2_uart0_rx, FUNC(specnext_im2_device::irq_w));
+	m_uart[0]->out_rx_full_near_callback().set(FUNC(specnext_state::uart_rx_near_full_w<0>));
 	m_uart[0]->out_tx_empty_callback().set(m_im2_uart0_tx, FUNC(specnext_im2_device::irq_w));
 	m_uart[0]->out_rts_callback().set("rs232_esp", FUNC(rs232_port_device::write_rts));
 	rs232_port_device &rs232_esp(RS232_PORT(config, "rs232_esp", rs232_devices, "esp8266_at"));
@@ -4303,7 +4325,7 @@ void specnext_state::tbblue(machine_config &config)
 	SPECNEXT_UART(config, m_uart[1], 28_MHz_XTAL);
 	m_uart[1]->out_txd_callback().set("rs232_rpi", FUNC(rs232_port_device::write_txd));
 	m_uart[1]->out_txd_callback().append(FUNC(specnext_state::txd_w<1>));
-	m_uart[1]->out_rx_full_near_callback().set(m_im2_uart1_rx, FUNC(specnext_im2_device::irq_w));
+	m_uart[1]->out_rx_full_near_callback().set(FUNC(specnext_state::uart_rx_near_full_w<1>));
 	m_uart[1]->out_tx_empty_callback().set(m_im2_uart1_tx, FUNC(specnext_im2_device::irq_w));
 	m_uart[1]->out_rts_callback().set("rs232_rpi", FUNC(rs232_port_device::write_rts));
 	rs232_port_device &rs232_rpi(RS232_PORT(config, "rs232_rpi", rs232_devices, nullptr));
