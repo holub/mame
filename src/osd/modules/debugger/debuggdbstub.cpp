@@ -18,7 +18,7 @@
 #include "modules/lib/osdobj_common.h"
 #include "modules/osdmodule.h"
 
-#include "fileio.h"
+#include "osdfile.h"
 
 #include <cinttypes>
 #include <string_view>
@@ -795,9 +795,10 @@ public:
 		m_debugger_console(nullptr),
 		m_debugger_host(),
 		m_debugger_port(0),
-		m_socket(OPEN_FLAG_WRITE | OPEN_FLAG_CREATE),
+		m_socket(),
 		m_is_be(false),
 		m_initialized(false),
+		m_connected(false),
 		m_dettached(false),
 		m_extended_mode(false),
 		m_send_stop_packet(false),
@@ -878,7 +879,13 @@ public:
 
 	void send_xfer(std::string const &content, int offset, int length);
 
+	bool start_listening();
+	void init_cpu();
+	void client_connected();
+	void client_disconnected();
+
 	int readchar();
+	void write_socket(const void *buffer, std::uint32_t length);
 
 	void send_reply(std::string_view str);
 	void send_stop_packet();
@@ -893,9 +900,10 @@ private:
 	debugger_console *m_debugger_console;
 	std::string m_debugger_host;
 	int m_debugger_port;
-	emu_file m_socket;
+	osd_file::ptr m_socket;
 	bool m_is_be;
 	bool m_initialized;
+	bool m_connected;
 	bool m_dettached;
 	bool m_extended_mode;
 	bool m_send_stop_packet;
@@ -950,38 +958,109 @@ void debug_gdbstub::exit()
 void debug_gdbstub::init_debugger(running_machine &machine)
 {
 	m_machine = &machine;
+	m_initialized = false;
+	m_gdb_registers.clear();
+	m_stop_reply_registers.clear();
+	m_address_map.clear();
+	m_target_xml.clear();
 
 	// the fatal error is deferred to a reset notifier: throwing from
 	// here or from an instruction hook crashes on exit
-	std::string socket_name = string_format("socket.%s:%d", m_debugger_host, m_debugger_port);
-	std::error_condition const filerr = m_socket.open(socket_name);
-	if ( filerr )
+	if ( !start_listening() )
 	{
-		osd_printf_error("gdbstub: failed to start listening on address %s port %d\n", m_debugger_host, m_debugger_port);
 		machine.add_notifier(MACHINE_NOTIFY_RESET,
 			machine_notify_delegate([this]() {
 				fatalerror("gdbstub: failed to start listening on address %s port %d\n", m_debugger_host, m_debugger_port);
 			}));
 		return;
 	}
+	machine.add_notifier(MACHINE_NOTIFY_RESET, machine_notify_delegate(&debug_gdbstub::init_cpu, this));
+
+	// a hard reset updates the display before the new machine's debugger exists
+	machine.add_notifier(MACHINE_NOTIFY_EXIT, machine_notify_delegate([this]() { m_initialized = false; }));
+}
+
+//-------------------------------------------------------------------------
+bool debug_gdbstub::start_listening()
+{
+	m_socket.reset();
+	m_connected = false;
+	m_dettached = false;
+	m_send_stop_packet = false;
+	m_readbuf_len = 0;
+	m_readbuf_offset = 0;
+
+	std::string socket_name = string_format("socket.%s:%d", m_debugger_host, m_debugger_port);
+	std::uint64_t filesize;
+	std::error_condition const filerr = osd_file::open(socket_name, OPEN_FLAG_WRITE | OPEN_FLAG_CREATE, m_socket, filesize);
+	if ( filerr )
+	{
+		m_socket.reset();
+		osd_printf_error("gdbstub: failed to start listening on address %s port %d\n", m_debugger_host, m_debugger_port);
+		return false;
+	}
 	osd_printf_info("gdbstub: listening on address %s port %d\n", m_debugger_host, m_debugger_port);
+	return true;
+}
+
+//-------------------------------------------------------------------------
+void debug_gdbstub::client_connected()
+{
+	m_connected = true;
+	m_readbuf_state = PACKET_START;
+	m_extended_mode = false;
+	m_send_stop_packet = false;
+	m_target_xml_sent = false;
+	osd_printf_info("gdbstub: client connected\n");
+	if ( !m_debugger_cpu->is_stopped() )
+		m_debugger_cpu->set_execution_stopped();
+}
+
+//-------------------------------------------------------------------------
+void debug_gdbstub::client_disconnected()
+{
+	osd_printf_info("gdbstub: client disconnected\n");
+
+	// resume, as after a detach
+	if ( m_debugger_cpu->is_stopped() )
+		m_debugger_console->get_visible_cpu()->debug()->go();
+	start_listening(); // accept a new client, see issue #9578
 }
 
 //-------------------------------------------------------------------------
 int debug_gdbstub::readchar()
 {
-	// NOTE: we don't use m_socket.getc() because it does not work with
-	//       sockets (it assumes seeking is possible).
+	// NOTE: we don't use emu_file because its read() discards the error,
+	//       so a new connection looks the same as a closed one.
 
-	if ( !m_socket.is_open() )
+	if ( m_dettached )
+		client_disconnected();
+
+	if ( !m_socket || !m_initialized )
 		return -1;
 
 	if ( m_readbuf_offset == m_readbuf_len )
 	{
 		m_readbuf_offset = 0;
-		m_readbuf_len = m_socket.read(m_readbuf, sizeof(m_readbuf));
-		if ( m_readbuf_len == 0 )
+		m_readbuf_len = 0;
+		std::uint32_t actual = 0;
+		std::error_condition const err = m_socket->read(m_readbuf, 0, sizeof(m_readbuf), actual);
+		if ( err == std::errc::operation_would_block )
 			return -1;
+		if ( !m_connected )
+		{
+			// listening socket accepted a connection
+			if ( !err )
+				client_connected();
+			return -1;
+		}
+		if ( err || actual == 0 )
+		{
+			// connection closed by the client, or an error
+			client_disconnected();
+			return -1;
+		}
+		m_readbuf_len = actual;
 	}
 
 	return (int) m_readbuf[m_readbuf_offset++];
@@ -1095,12 +1174,9 @@ void debug_gdbstub::send_xfer(std::string const &content, int offset, int length
 }
 
 //-------------------------------------------------------------------------
-void debug_gdbstub::wait_for_debugger(device_t &device, bool firststop)
+void debug_gdbstub::init_cpu()
 {
-	if ( m_dettached )
-		return;
-
-	if ( firststop && !m_initialized )
+	if ( !m_initialized )
 	{
 		// find the "main" CPU, which is the first CPU (gdbstub doesn't have any notion of switching CPUs)
 		m_maincpu = device_interface_enumerator<cpu_device>(m_machine->root_device()).first();
@@ -1231,16 +1307,18 @@ void debug_gdbstub::wait_for_debugger(device_t &device, bool firststop)
 
 		m_initialized = true;
 	}
-	else
+}
+
+//-------------------------------------------------------------------------
+void debug_gdbstub::wait_for_debugger(device_t &device, bool firststop)
+{
+	device_debug *debug = m_debugger_console->get_visible_cpu()->debug();
+	m_triggered_watchpoint = debug->triggered_watchpoint();
+	m_triggered_breakpoint = debug->triggered_breakpoint();
+	if ( m_send_stop_packet )
 	{
-		device_debug *debug = m_debugger_console->get_visible_cpu()->debug();
-		m_triggered_watchpoint = debug->triggered_watchpoint();
-		m_triggered_breakpoint = debug->triggered_breakpoint();
-		if ( m_send_stop_packet )
-		{
-			send_stop_packet();
-			m_send_stop_packet = false;
-		}
+		send_stop_packet();
+		m_send_stop_packet = false;
 	}
 
 	while ( m_debugger_cpu->is_stopped() )
@@ -1268,21 +1346,26 @@ void debug_gdbstub::debugger_update()
 			break;
 		handle_character((char) ch);
 	}
+}
 
-	if ( m_dettached && m_socket.is_open() )
-		m_socket.close();
+//-------------------------------------------------------------------------
+void debug_gdbstub::write_socket(const void *buffer, std::uint32_t length)
+{
+	std::uint32_t actual;
+	if ( m_socket )
+		m_socket->write(buffer, 0, length, actual);
 }
 
 //-------------------------------------------------------------------------
 void debug_gdbstub::send_nack()
 {
-	m_socket.write("-", 1);
+	write_socket("-", 1);
 }
 
 //-------------------------------------------------------------------------
 void debug_gdbstub::send_ack()
 {
-	m_socket.write("+", 1);
+	write_socket("+", 1);
 }
 
 //-------------------------------------------------------------------------
@@ -1293,7 +1376,7 @@ void debug_gdbstub::send_reply(std::string_view str)
 		checksum += ch;
 
 	std::string reply = string_format("$%s#%02x", str, checksum);
-	m_socket.write(reply.c_str(), reply.length());
+	write_socket(reply.c_str(), reply.length());
 }
 
 
@@ -1391,8 +1474,8 @@ debug_gdbstub::cmd_reply debug_gdbstub::handle_k(const char *buf)
 {
 	m_machine->schedule_exit();
 	m_debugger_console->get_visible_cpu()->debug()->go();
-	m_dettached = true;
-	m_socket.close();
+	m_socket.reset();
+	m_connected = false;
 	return REPLY_NONE;
 }
 
