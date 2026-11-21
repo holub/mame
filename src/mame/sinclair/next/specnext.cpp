@@ -3823,6 +3823,7 @@ void specnext_state::reset_hard()
 
 	m_dma->dma_mode_w(0);
 	m_dma->ddma_en_w(core_30303());
+	m_maincpu->core_30303_w(core_30303());
 	// nmi_mf = 0;
 	// nmi_divmmc = 0;
 	// nmi_expbus = 0;
