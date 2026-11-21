@@ -9043,6 +9043,16 @@ z80n:ed92	# nextreg *,a
 	m_out_nextreg_cb(TDAT8, A);
 	+ 3
 
+z80n:edc7	# nextreg a,*
+	if (m_core_30303) {
+		@arg
+		A = m_in_nextreg_cb(TDAT8);
+		+ 2
+		;
+	} else {
+		illegal_2();
+	}
+
 z80n:ed93	# pixeldn
 	if (0x07 != (H & 0x07))
 		HL = HL + 0x100;

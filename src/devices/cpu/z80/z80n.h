@@ -20,6 +20,9 @@ public:
 	bool nmi_stackless_r() { return m_stackless; }
 	void nmi_stackless_w(bool data);
 
+	// Core 3.03.03 changed the Z80N: it adds NEXTREG A,n (ED C7)
+	void core_30303_w(bool data) { m_core_30303 = data; }
+
 protected:
 	virtual void device_start() override ATTR_COLD;
 	virtual void device_reset() override ATTR_COLD;
@@ -36,6 +39,7 @@ protected:
 private:
 	bool m_stackless;
 	bool m_stackless_retn_en;
+	bool m_core_30303;
 
 };
 

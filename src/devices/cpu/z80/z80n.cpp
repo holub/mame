@@ -28,6 +28,7 @@ z80n_device::z80n_device(const machine_config &mconfig, const char *tag, device_
 	, m_out_retn_seen_cb(*this)
 	, m_in_nextreg_cb(*this, 0)
 	, m_out_nextreg_cb(*this)
+	, m_core_30303(false)
 {
 }
 
@@ -48,6 +49,7 @@ void z80n_device::device_start()
 	z80_device::device_start();
 	save_item(NAME(m_stackless));
 	save_item(NAME(m_stackless_retn_en));
+	save_item(NAME(m_core_30303));
 }
 
 void z80n_device::device_reset()
