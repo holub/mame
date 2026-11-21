@@ -6,8 +6,9 @@
 #pragma once
 
 #include "z80.h"
+#include "z80ndasm.h"
 
-class z80n_device : public z80_device
+class z80n_device : public z80_device, public z80n_disassembler::config
 {
 public:
 	// construction/destruction
@@ -35,6 +36,9 @@ protected:
 	devcb_write8 m_out_nextreg_cb;
 
 	virtual std::unique_ptr<util::disasm_interface> create_disassembler() override;
+
+	// z80n_disassembler::config implementation
+	virtual bool core_30303() const override { return m_core_30303; }
 
 private:
 	bool m_stackless;

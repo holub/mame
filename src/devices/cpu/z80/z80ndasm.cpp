@@ -8,6 +8,19 @@
 #include "emu.h"
 #include "z80ndasm.h"
 
+z80n_disassembler::z80n_disassembler(config *conf)
+	: m_config(conf)
+{
+}
+
+// NEXTREG A,n (ED C7) exists from core 3.03.03
+const z80_disassembler::z80dasm &z80n_disassembler::get_mnemonic_ed(u8 opcode)
+{
+	if ((opcode == 0xc7) && !m_config->core_30303())
+		return mnemonic_ed[opcode];
+	return mnemonic_ed_n[opcode];
+}
+
 const z80_disassembler::z80dasm z80n_disassembler::mnemonic_ed_n[256] =
 {
 	{zDB,"?"},      {zDB,"?"},      {zDB,"?"},      {zDB,"?"},
@@ -59,7 +72,7 @@ const z80_disassembler::z80dasm z80n_disassembler::mnemonic_ed_n[256] =
 	{zLDDR,nullptr},{zCPDR,nullptr},{zINDR,nullptr},{zOTDR,nullptr},
 	{zLDRX,nullptr},{zDB,"?"},      {zDB,"?"},      {zDB,"?"},
 	{zDB,"?"},      {zDB,"?"},      {zDB,"?"},      {zDB,"?"},
-	{zDB,"?"},      {zDB,"?"},      {zDB,"?"},      {zDB,"?"},
+	{zDB,"?"},      {zDB,"?"},      {zDB,"?"},      {zNREG,"a,B"},
 	{zDB,"?"},      {zDB,"?"},      {zDB,"?"},      {zDB,"?"},
 	{zDB,"?"},      {zDB,"?"},      {zDB,"?"},      {zDB,"?"},
 	{zDB,"?"},      {zDB,"?"},      {zDB,"?"},      {zDB,"?"},

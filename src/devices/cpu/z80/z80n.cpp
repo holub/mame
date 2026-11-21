@@ -20,7 +20,7 @@ DEFINE_DEVICE_TYPE(Z80N, z80n_device, "z80n", "Z80N")
 
 std::unique_ptr<util::disasm_interface> z80n_device::create_disassembler()
 {
-	return std::make_unique<z80n_disassembler>();
+	return std::make_unique<z80n_disassembler>(this);
 }
 
 z80n_device::z80n_device(const machine_config &mconfig, const char *tag, device_t *owner, u32 clock)
