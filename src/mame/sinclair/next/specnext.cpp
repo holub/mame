@@ -3039,7 +3039,7 @@ void specnext_state::map_fetch(address_map &map)
 				m_divmmc_delayed_check = 0;
 
 				// do_m1 performs read from m_program with waits, we need to take it back
-				if (m_nr_07_cpu_speed == 0b11)
+				if ((m_nr_07_cpu_speed == 0b11) && !core_30303())
 				{
 					m_maincpu->adjust_icount(1);
 				}
@@ -4231,8 +4231,8 @@ void specnext_state::video_start()
 	});
 	prg.install_read_tap(0x0000, 0xffff, "mem_wait_r", [this](offs_t offset, u8 &data, u8 mem_mask)
 	{
-		// The 28MHz with core 3.0.5 is adding extra wait state to every instruction opcode fetch and memory read
-		if (!machine().side_effects_disabled() && (m_nr_07_cpu_speed == 0b11))
+		// At 28MHz, cores before 3.03.03 add a wait state to every opcode fetch and memory read
+		if (!machine().side_effects_disabled() && (m_nr_07_cpu_speed == 0b11) && !core_30303())
 		{
 			m_maincpu->adjust_icount(-1);
 		}
