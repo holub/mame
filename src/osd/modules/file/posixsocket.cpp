@@ -34,6 +34,28 @@ char const *const posixfile_socket_identifier  = "socket.";
 char const *const posixfile_domain_identifier  = "domain.";
 
 
+// a write to a socket the peer has closed must not raise SIGPIPE
+#if defined(SO_NOSIGPIPE)
+constexpr int posixfile_send_flags = 0;
+
+void posixfile_no_sigpipe(int sock) noexcept
+{
+	int const flag = 1;
+	::setsockopt(sock, SOL_SOCKET, SO_NOSIGPIPE, &flag, sizeof(flag));
+}
+#else
+#if defined(MSG_NOSIGNAL)
+constexpr int posixfile_send_flags = MSG_NOSIGNAL;
+#else
+constexpr int posixfile_send_flags = 0;
+#endif
+
+void posixfile_no_sigpipe(int) noexcept
+{
+}
+#endif
+
+
 class posix_osd_socket : public osd_file
 {
 public:
@@ -47,6 +69,7 @@ public:
 		, m_listening(listening)
 	{
 		assert(m_sock >= 0);
+		posixfile_no_sigpipe(m_sock);
 	}
 
 	virtual ~posix_osd_socket()
@@ -96,6 +119,7 @@ public:
 					::close(m_sock);
 					m_sock = accepted;
 					m_listening = false;
+					posixfile_no_sigpipe(m_sock);
 					actual = 0;
 
 					return std::error_condition();
@@ -115,7 +139,7 @@ public:
 		if (!m_listening)
 		{
 			// connected socket
-			ssize_t const result = ::write(m_sock, buffer, count);
+			ssize_t const result = ::send(m_sock, buffer, count, posixfile_send_flags);
 			if (result < 0)
 				return std::error_condition(errno, std::generic_category());
 
