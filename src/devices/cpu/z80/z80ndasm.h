@@ -14,10 +14,22 @@
 
 class z80n_disassembler : public z80_disassembler
 {
+public:
+	class config {
+	public:
+		virtual ~config() = default;
+		virtual bool core_30303() const = 0;
+	};
+
+	z80n_disassembler(config *conf);
+
 protected:
 	static const z80dasm mnemonic_ed_n[256];
 
-	virtual const z80dasm &get_mnemonic_ed(u8 opcode) override { return mnemonic_ed_n[opcode]; }
+	virtual const z80dasm &get_mnemonic_ed(u8 opcode) override;
+
+private:
+	config *m_config;
 };
 
 #endif
