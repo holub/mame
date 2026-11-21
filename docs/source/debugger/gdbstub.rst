@@ -33,8 +33,8 @@ session per MAME run.  This follows the remote serial protocol's
 model of a single controlling debugger, and the listening socket is
 closed once the first connection is accepted:
 
-* After the client disconnects, the stub does not accept new
-  connections; restart MAME for another session.
+* After the client disconnects, the emulated system resumes and the
+  stub listens again on the same address and port.
 * GDB's ``detach`` resumes the emulated system and leaves MAME
   running.  The connection is closed once the reply is flushed, so the
   port is free for a new listener (e.g. another MAME instance).
